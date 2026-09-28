@@ -676,7 +676,7 @@ class EditorApp {
             row("Paste", "^V"),
             row("Delete word back", "^H / ⌥⌫"),
             row("Cycle task state", "^T"),
-            row("Indent / insert tab (heading: promote)", "Tab"),
+            row("Cycle task / promote heading / indent", "Tab"),
             row("Outdent (heading: demote)", "⇧Tab"),
             row("Focus sidebar", "⌥S"),
             row("AI assist", "^Space"),
@@ -1282,12 +1282,10 @@ class EditorApp {
             case Key.ctrlRightBracket:
                 followLinkUnderCursor()
             case Key.tab:
-                // Headings keep the promote/demote pair on Tab / Shift+Tab.
-                // Everywhere else Tab indents: a native tab at the caret, or one
-                // tab on each selected line. Task cycling stays on Ctrl+T, and
-                // the sidebar is focused with Alt+S, so a bare Tab never
-                // disappears into a mode switch.
-                if state.cursorHeadingLevel != nil {
+                // Tasks cycle without a selection; selected tasks still indent.
+                if state.cursorLineIsTask && !state.document.hasSelection {
+                    state.cycleTaskState()
+                } else if state.cursorHeadingLevel != nil {
                     state.adjustHeadingLevel(by: -1)
                 } else {
                     state.handleTab()
@@ -3619,7 +3617,7 @@ class EditorApp {
         let doc = state.document
         guard doc.cursorLine < doc.lines.count else { return nil }
         if let list = parseListLine(doc.lines[doc.cursorLine]), case .todo = list.kind {
-            return "^T toggle task · Tab indent"
+            return state.document.hasSelection ? "^T toggle task · Tab indent" : "^T/Tab toggle task"
         }
         if state.cursorHeadingLevel != nil {
             return "Tab/⇧Tab title size"

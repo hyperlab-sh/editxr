@@ -1,10 +1,8 @@
 import XCTest
 @testable import editxr
 
-/// Tab is a real editing key now: it indents (or inserts a native tab) and
-/// Shift+Tab outdents, while headings keep the promote/demote pair. Task
-/// cycling stays on Ctrl+T and the sidebar is focused with Alt+S, so a bare Tab
-/// never disappears into a mode switch.
+/// Tab cycles tasks, promotes headings, and otherwise inserts a native tab.
+/// Selections indent, Shift+Tab outdents, and Alt+S focuses the sidebar.
 final class TabKeyTests: XCTestCase {
 
     private func makeApp(_ content: String, cursorLine: Int = 0,
@@ -32,11 +30,61 @@ final class TabKeyTests: XCTestCase {
         XCTAssertEqual(state.document.cursorColumn, 1)
     }
 
-    func testTabKeepsItsTaskMarkerUntouched() {
-        // Tab must not cycle the task any more (Ctrl+T does) — it indents.
+    func testTabCyclesTaskStatesWithoutMovingTheCursor() {
+        for column in [0, 6, 10] {
+            let (app, state) = makeApp("- [ ] task\nline\n", cursorColumn: column)
+            for marker in ["*", "x", " "] {
+                app.handleInputForTest("\t")
+                XCTAssertEqual(state.document.lines, ["- [\(marker)] task", "line", ""])
+                XCTAssertEqual(state.document.cursorColumn, column)
+                XCTAssertTrue(state.isDirty)
+            }
+        }
+    }
+
+    func testTabCyclesIndentedTasksWithEveryBulletMarker() {
+        for prefix in ["  -", "\t*", "    +"] {
+            let (app, state) = makeApp("\(prefix) [ ] task\nline", cursorColumn: 8)
+            app.handleInputForTest("\t")
+            XCTAssertEqual(state.document.lines[0], "\(prefix) [*] task")
+        }
+    }
+
+    func testTabCyclesTaskInBlockModeWithTheSidebarVisible() {
         let (app, state) = makeApp("- [ ] task\nline")
+        state.blockMode = true
+        state.sidebarMode = .outline
+        _ = app.renderEditorLinesForTest(width: 100, height: 24)
+
         app.handleInputForTest("\t")
-        XCTAssertEqual(state.document.lines[0], "\t- [ ] task")
+
+        XCTAssertEqual(state.document.lines[0], "- [*] task")
+        XCTAssertFalse(app.sidebarFocusedForTest)
+        app.handleInputForTest("\u{15}") // Ctrl+U
+        XCTAssertEqual(state.document.lines[0], "- [ ] task")
+        app.handleInputForTest("\u{19}") // Ctrl+Y
+        XCTAssertEqual(state.document.lines[0], "- [*] task")
+    }
+
+    func testTabIndentsSelectedTasksWithoutCyclingThem() {
+        let (app, state) = makeApp("- [ ] first\n- [x] second\nline")
+        state.document.selectionAnchor = CursorPosition(line: 0, column: 0)
+        state.document.cursorLine = 1
+        state.document.cursorColumn = 6
+
+        app.handleInputForTest("\t")
+
+        XCTAssertEqual(state.document.lines, ["\t- [ ] first", "\t- [x] second", "line", ""])
+        XCTAssertEqual(state.document.selectionAnchor, CursorPosition(line: 0, column: 1))
+        XCTAssertEqual(state.document.cursorColumn, 7)
+    }
+
+    func testTaskHintShowsTabShortcut() {
+        let (app, state) = makeApp("- [ ] task\nline")
+        state.contextHelp = true
+        let frame = app.renderEditorLinesForTest(width: 100, height: 24)
+            .map { RenderTests.plain($0) }.joined(separator: "\n")
+        XCTAssertTrue(frame.contains("^T/Tab toggle task"))
     }
 
     func testTabPromotesAHeading() {
