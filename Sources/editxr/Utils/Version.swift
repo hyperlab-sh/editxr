@@ -3,7 +3,7 @@ import Foundation
 /// App identity + CLI help text, shared by `main` and the welcome splash.
 enum AppInfo {
     static let name = "editxr"
-    static let version = "1.8.1"
+    static let version = "1.9.0"
     static let tagline = "a minimalist Markdown editor for the terminal"
 
     static var helpText: String {
@@ -14,6 +14,7 @@ enum AppInfo {
           \(name) <file>...       Open or create Markdown files (one tab each)
           \(name) .               Open the folder with the file-explorer sidebar
           \(name) --vault <dir>   Use <dir> as the vault for this run
+          \(name) --vault         Open the configured vault
           \(name) --help          Show this help
           \(name) --version       Print the version
 

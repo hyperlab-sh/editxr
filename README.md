@@ -170,6 +170,11 @@ and `[[wikilink]]` navigation to have somewhere to go:
 swift run editxr --vault example-vault "example-vault/Home.md"
 ```
 
+Once a vault is configured (via **Vault settings** in the palette, or
+`--vault <dir>`), `editxr --vault` with no path opens that vault directly —
+the file-explorer sidebar on its primary file. The same action is available
+inside the editor as **Open vault** in the command palette.
+
 Requires macOS 12+ and a Swift 5.9+ toolchain. It also builds and runs on
 Linux and Windows (Swift 6+). On both, OpenAI OAuth sign-in is unavailable (the
 other LLM providers work as usual); on Windows, clipboard and terminal-theme

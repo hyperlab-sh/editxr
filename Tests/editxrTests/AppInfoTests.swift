@@ -3,7 +3,12 @@ import XCTest
 
 final class AppInfoTests: XCTestCase {
     func testTaskTabFixReleaseIdentity() {
-        XCTAssertEqual(AppInfo.version, "1.8.1")
-        XCTAssertTrue(AppInfo.helpText.hasPrefix("editxr 1.8.1 —"))
+        XCTAssertEqual(AppInfo.version, "1.9.0")
+        XCTAssertTrue(AppInfo.helpText.hasPrefix("editxr 1.9.0 —"))
+    }
+
+    func testHelpDocumentsBareVault() {
+        XCTAssertTrue(AppInfo.helpText.contains("--vault         Open the configured vault"),
+                      "the bare --vault form must be discoverable in the help")
     }
 }

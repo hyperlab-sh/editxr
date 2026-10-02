@@ -39,6 +39,7 @@ if arguments.contains("--probe-widths") {
 
 // --vault <path> pins the vault root for this run, overriding the config. Its
 // value is a bare path, so it has to be pulled out before the file list is read.
+// A bare `--vault` (no value) instead opens the configured vault.
 var vaultArgIndex: Int?
 if let i = arguments.firstIndex(of: "--vault"), i + 1 < arguments.count {
     Vault.commandLineRoot = Vault.standardized(arguments[i + 1])
@@ -54,7 +55,15 @@ if let root = launch.directoryRoot {
     Vault.commandLineRoot = root
 }
 
-let states = LaunchArguments.makeStates(from: launch)
+// A bare `--vault` opens the configured vault. Resolve it from the config here
+// (the same precedence Vault uses) so `makeStates` can open its primary file;
+// when nothing is configured the states stay empty and help is printed below.
+var configuredVaultRoot: String?
+if launch.openVault, let path = Config.load().vaultPath, !path.isEmpty {
+    configuredVaultRoot = Vault.standardized(path)
+}
+
+let states = LaunchArguments.makeStates(from: launch, vaultRoot: configuredVaultRoot)
 guard !states.isEmpty else {
     print(AppInfo.helpText)
     exit(1)

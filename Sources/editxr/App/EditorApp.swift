@@ -270,15 +270,21 @@ class EditorApp {
     /// The Vault group: search, marking a folder as the vault, and everything
     /// else nested one level down so the root palette stays short.
     private func vaultMenuCommands() -> [PaletteCommand] {
-        return [
+        var cmds: [PaletteCommand] = [
             PaletteCommand(title: "Search vault", shortcut: "^K", keepsOpen: true) { [weak self] in
                 self?.openVaultSearch()
             },
-            PaletteCommand(title: "Use this folder as vault", shortcut: "") { [weak self] in
-                self?.useCurrentFolderAsVault()
-            },
-            submenuCommand("Vault settings") { [weak self] in self?.vaultSettingsCommands() ?? [] },
         ]
+        if vault.isExplicit {
+            cmds.append(PaletteCommand(title: "Open vault", shortcut: "") { [weak self] in
+                self?.openConfiguredVault()
+            })
+        }
+        cmds.append(PaletteCommand(title: "Use this folder as vault", shortcut: "") { [weak self] in
+            self?.useCurrentFolderAsVault()
+        })
+        cmds.append(submenuCommand("Vault settings") { [weak self] in self?.vaultSettingsCommands() ?? [] })
+        return cmds
     }
 
     /// Everything vault-scoped: which folder, the recents, how search behaves,
@@ -426,6 +432,35 @@ class EditorApp {
     /// Point the vault at the folder holding the file in the active tab.
     private func useCurrentFolderAsVault() {
         setVaultRoot(Vault.containingDirectory(of: state.filePath))
+    }
+
+    /// Open the configured vault as a workspace: focus a file inside it (the
+    /// vault's primary file, opened in a tab when the active one is elsewhere)
+    /// and turn the file-explorer sidebar on. Mirrors the bare `--vault` launch.
+    private func openConfiguredVault() {
+        guard let root = vault.configuredRoot, !root.isEmpty else { return }
+        let resolved = Vault.standardized(root)
+
+        // The sidebar scans `vaultRoot()`, which already prefers the configured
+        // root, so any open file works — but landing on a vault file keeps the
+        // editor and the explorer pointed at the same place.
+        if !isInside(resolved, path: state.filePath) {
+            if let primary = DirectoryScanner.primaryFile(in: DirectoryScanner.scan(root: resolved)) {
+                openFile(resolved + "/" + primary)
+            }
+        }
+        if state.sidebarMode != .files { toggleSidebarMode(.files) }
+        fileTreeScanCache = nil
+        collapsedFolders = allFolderPaths()
+        sidebarSelection = 0
+        commandPanel?.hide()
+        showToast("Vault: \(Vault.displayPath(resolved))")
+    }
+
+    /// Whether `path` lives inside `root` (or is `root` itself).
+    private func isInside(_ root: String, path: String) -> Bool {
+        let target = absolutePath(path)
+        return target == root || target.hasPrefix(root + "/")
     }
 
     /// Switch (or clear) the vault root. Every path-derived cache is keyed off
@@ -1599,6 +1634,10 @@ class EditorApp {
     var activeSidebarModeForTest: SidebarMode { state.sidebarMode }
     func sidebarModeForTabForTest(_ i: Int) -> SidebarMode { states[i].sidebarMode }
     func toggleSidebarModeForTest(_ mode: SidebarMode) { toggleSidebarMode(mode) }
+    /// Test hook: the Vault group's palette rows, so the "Open vault" entry can
+    /// be asserted without driving the whole panel.
+    func vaultMenuTitlesForTest() -> [String] { vaultMenuCommands().map(\.title) }
+    func openConfiguredVaultForTest() { openConfiguredVault() }
     var activeCursorLineForTest: Int { state.document.cursorLine }
     var activeFileForTest: String { state.filePath }
 

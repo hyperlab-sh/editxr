@@ -62,6 +62,52 @@ final class LaunchArgumentsTests: XCTestCase {
         XCTAssertEqual(parse.filePaths, [missing])
     }
 
+    // MARK: - bare --vault
+
+    func testBareVaultFlagRequestsVaultOpen() {
+        let parse = LaunchArguments.parse(arguments: ["editxr", "--vault"], vaultArgIndex: nil)
+        XCTAssertTrue(parse.openVault)
+        XCTAssertTrue(parse.filePaths.isEmpty)
+        XCTAssertNil(parse.directoryRoot)
+    }
+
+    func testVaultWithPathDoesNotRequestVaultOpen() {
+        let vaultDir = NSTemporaryDirectory() + "editxr-vault-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: vaultDir, withIntermediateDirectories: true)
+        let parse = LaunchArguments.parse(arguments: ["editxr", "--vault", vaultDir], vaultArgIndex: 2)
+        XCTAssertFalse(parse.openVault, "a --vault with a value pins a one-off root, it does not open the config vault")
+    }
+
+    func testNoVaultFlagDoesNotRequestVaultOpen() {
+        let parse = LaunchArguments.parse(arguments: ["editxr", "a.md"], vaultArgIndex: nil)
+        XCTAssertFalse(parse.openVault)
+    }
+
+    func testBareVaultWithConfiguredRootOpensPrimaryFileWithFileSidebar() {
+        let root = makeProject()
+        let parse = LaunchArguments.parse(arguments: ["editxr", "--vault"], vaultArgIndex: nil)
+        let states = LaunchArguments.makeStates(from: parse, vaultRoot: root)
+        XCTAssertEqual(states.count, 1)
+        XCTAssertEqual(states[0].filePath, root + "/README.md")
+        XCTAssertEqual(states[0].sidebarMode, .files)
+    }
+
+    func testBareVaultWithNoConfiguredRootOpensNothing() {
+        let parse = LaunchArguments.parse(arguments: ["editxr", "--vault"], vaultArgIndex: nil)
+        XCTAssertTrue(LaunchArguments.makeStates(from: parse, vaultRoot: nil).isEmpty,
+                      "no vault configured → no states, so main prints help")
+        XCTAssertTrue(LaunchArguments.makeStates(from: parse, vaultRoot: "").isEmpty)
+    }
+
+    func testBareVaultWithAnEmptyVaultOpensALoneBuffer() {
+        let root = NSTemporaryDirectory() + "editxr-empty-vault-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let parse = LaunchArguments.parse(arguments: ["editxr", "--vault"], vaultArgIndex: nil)
+        let states = LaunchArguments.makeStates(from: parse, vaultRoot: root)
+        XCTAssertEqual(states.map(\.filePath), [root])
+        XCTAssertEqual(states[0].sidebarMode, .files)
+    }
+
     // MARK: - primaryFile
 
     func testPrimaryPrefersRootReadme() {
