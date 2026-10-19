@@ -70,4 +70,7 @@ guard !states.isEmpty else {
 }
 
 let app = EditorApp(states: states)
+if let path = Mirror.path(in: arguments) {
+    app.mirror = Mirror(path: path, state: states[0])
+}
 app.start()

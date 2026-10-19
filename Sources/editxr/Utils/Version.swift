@@ -15,6 +15,9 @@ enum AppInfo {
           \(name) .               Open the folder with the file-explorer sidebar
           \(name) --vault <dir>   Use <dir> as the vault for this run
           \(name) --vault         Open the configured vault
+          \(name) --mirror=<path> <file>
+                                Keep <path> equal to the unsaved buffer;
+                                SIGUSR1 saves the file
           \(name) --help          Show this help
           \(name) --version       Print the version
 

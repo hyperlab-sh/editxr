@@ -58,6 +58,8 @@ class EditorApp {
     private var states: [EditorState]
     private var activeTab = 0
     private var state: EditorState { states[activeTab] }
+    /// Set by `--mirror=<path>`; see Mirror.
+    var mirror: Mirror?
     /// Visited-tab history for "back" (Ctrl+[ / Esc): each focus change pushes
     /// the outgoing tab so we can return to where we came from.
     private var backStack: [EditorState] = []
@@ -873,6 +875,10 @@ class EditorApp {
         }
 
         startFileWatch()
+        mirror?.watchSaveSignal { [weak self] in
+            self?.mirror?.state.save()
+            self?.render()
+        }
 
         hideCursor()
         render()
@@ -1569,6 +1575,7 @@ class EditorApp {
     }
     
     private func render() {
+        mirror?.update()
         applyTerminalBackground()
         let size = getTerminalSize()
         let output = renderEditor(width: size.width, height: size.height)
