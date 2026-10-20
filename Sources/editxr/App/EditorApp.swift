@@ -1656,6 +1656,8 @@ class EditorApp {
     }
 
     // Test hooks for sidebar focus/navigation (no rendering side effects).
+    func openFileForTest(_ path: String) { openFile(path) }
+    var statesForTest: [EditorState] { states }
     func focusSidebarForTest() { sidebarRendered = true; focusSidebar() }
     func sidebarKeyForTest(_ s: String) { handleSidebarKey(s) }
     func setSidebarSelectionForTest(_ i: Int) { sidebarSelection = i }
@@ -4045,6 +4047,8 @@ class EditorApp {
             backStack.append(states[activeTab])
             let st = EditorState(filePath: path)
             st.sidebarMode = state.sidebarMode   // sidebar mode is app-wide: new tabs inherit it
+            st.viewMode = state.viewMode          // a `--view` pin is run-wide: new tabs inherit view and pin
+            st.viewModePinned = state.viewModePinned
             st.onSavedIndicatorChanged = { [weak self] in self?.render() }
             states.append(st)
             activeTab = states.count - 1
