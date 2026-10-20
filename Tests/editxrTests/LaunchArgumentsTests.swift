@@ -176,3 +176,16 @@ final class LaunchArgumentsTests: XCTestCase {
         XCTAssertEqual(states[0].sidebarMode, baseline, "no directory arg → the configured sidebar is left untouched")
     }
 }
+
+final class ViewFlagParseTests: XCTestCase {
+    func testViewFlagIsParsed() {
+        func view(_ a: [String]) -> ViewMode? {
+            LaunchArguments.parse(arguments: ["editxr"] + a, vaultArgIndex: nil).view
+        }
+        XCTAssertEqual(view(["--view=raw"]), .raw)
+        XCTAssertEqual(view(["--view=rendered"]), .normal)
+        XCTAssertNil(view(["--view=bogus"]))
+        XCTAssertNil(view([]))
+        XCTAssertTrue(LaunchArguments.parse(arguments: ["editxr", "--view=raw"], vaultArgIndex: nil).filePaths.isEmpty)
+    }
+}

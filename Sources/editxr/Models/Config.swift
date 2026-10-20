@@ -42,7 +42,8 @@ struct Config: Codable {
     var openAIRefreshToken: String? = nil
     var openAIExpiresAt: Double? = nil
     
-    static let configPath: String = {
+    /// Where the config lives. `var` so tests can point it at a temp file.
+    static var configPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.config/editxr/config.json"
     }()

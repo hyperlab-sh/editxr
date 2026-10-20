@@ -41,6 +41,9 @@ class EditorState {
     let filePath: String
     var document: Document
     var viewMode: ViewMode = .normal
+    /// True when `--view` chose the view for this run: toggling it still works
+    /// but is not written to the saved config.
+    var viewModePinned = false
     var focusMode: FocusMode = .off
     var showStatusBar: Bool = true
     var showLineNumbers: Bool = false
@@ -430,7 +433,7 @@ class EditorState {
         config.tabWidth = tabWidth
         config.theme = themeName.rawValue
         config.appearance = appearance.rawValue
-        config.renderMarkdown = viewMode == .normal
+        if !viewModePinned { config.renderMarkdown = viewMode == .normal }
         config.llmProvider = llmProvider
         config.openRouterKey = openRouterKey
         config.openRouterModel = openRouterModel

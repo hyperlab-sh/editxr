@@ -17,6 +17,10 @@ enum LaunchArguments {
         /// True when `--vault` was passed with no value: open the configured
         /// vault (the folder in the config) rather than a one-off root.
         let openVault: Bool
+        /// Starting view requested by `--view=raw|rendered` (`.normal` is the
+        /// rendered view). Nil when absent or the value is unrecognised. Applies
+        /// to this run only; it is never saved to the config.
+        var view: ViewMode? = nil
     }
 
     /// Classify the arguments. `vaultArgIndex` is the argument offset of the
@@ -42,7 +46,15 @@ enum LaunchArguments {
                 filePaths.append(arg)
             }
         }
-        return Parse(filePaths: filePaths, directoryRoot: directoryRoot, openVault: openVault)
+        var view: ViewMode? = nil
+        for arg in arguments.dropFirst() {
+            switch arg {
+            case "--view=raw": view = .raw
+            case "--view=rendered": view = .normal
+            default: if arg.hasPrefix("--view=") { view = nil }
+            }
+        }
+        return Parse(filePaths: filePaths, directoryRoot: directoryRoot, openVault: openVault, view: view)
     }
 
     /// Build the tabs an invocation opens. Opening a directory with no file

@@ -69,6 +69,12 @@ guard !states.isEmpty else {
     exit(1)
 }
 
+// --view=raw|rendered picks the starting view for this run only: ctrl+r still
+// toggles it, but nothing is written to the saved preference.
+if let view = launch.view {
+    for st in states { st.viewMode = view; st.viewModePinned = true }
+}
+
 // --image-id-base=<n> lets a second instance (follow preview) share the
 // terminal without colliding on Kitty image ids; invalid values are ignored.
 let app = EditorApp(states: states, images: Images.idBase(in: arguments).map { Images(idBase: $0) } ?? Images())
