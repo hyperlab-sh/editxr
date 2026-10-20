@@ -103,8 +103,8 @@ final class Images {
     private var pending: Set<String> = []
     private var failed: Set<String> = []
     private var transmitted: Set<UInt32> = []
-    /// What the terminal currently shows, by image id; `commands` emits only the delta.
-    private var placed: [UInt32: (row: Int, column: Int, columns: Int, rows: Int)] = [:]
+    /// Copies of each image id placed by the previous `commands` call.
+    private var placedCopies: [UInt32: Int] = [:]
     private let idBase: UInt32
     private var nextID: UInt32
     private let config = Config.load()
@@ -175,31 +175,37 @@ final class Images {
         store(png, key: "test:\(nextID)")
     }
 
-    /// The Kitty commands that turn the previous frame's placements into these:
-    /// per-id deletes for placements that vanished or moved, a one-time transmit
-    /// for new ids, and a place for new or moved placements. Unchanged frames
-    /// emit nothing. One placement per image id.
+    /// The Kitty commands for one frame. Every placement is re-sent every frame
+    /// (WezTerm ties image fragments to cells, and the text repaint clears them);
+    /// copy k of an image id is placement `p=k`, so re-sending replaces it in
+    /// place, moved ones included. Image data is transmitted once per id. Ids
+    /// that vanished, or whose copy count shrank, get a per-id delete first so
+    /// no stale copy lingers; other instances' images are never touched.
     func commands(_ placements: [Placement]) -> String {
-        var next: [UInt32: (row: Int, column: Int, columns: Int, rows: Int)] = [:]
-        for placement in placements {
-            next[placement.image.id] = (placement.row, placement.column, placement.columns, placement.rows)
-        }
+        var copies: [UInt32: Int] = [:]
+        for placement in placements { copies[placement.image.id, default: 0] += 1 }
         var output = ""
-        for (id, old) in placed.sorted(by: { $0.key < $1.key }) where next[id].map({ $0 != old }) ?? true {
+        for (id, count) in placedCopies.sorted(by: { $0.key < $1.key }) where copies[id, default: 0] < count {
             output += KittyGraphics.deleteImage(id: id)
         }
+        var copy: [UInt32: Int] = [:]
         for placement in placements {
             let id = placement.image.id
-            guard let spot = next[id], placed[id].map({ $0 != spot }) ?? true else { continue }
+            copy[id, default: 0] += 1
             if transmitted.insert(id).inserted {
                 output += KittyGraphics.transmit(placement.image.png.data, id: id)
             }
-            output += KittyGraphics.place(id: id, row: spot.row, column: spot.column,
-                                          columns: spot.columns, rows: spot.rows)
-            placed[id] = spot
+            output += KittyGraphics.place(id: id, placement: copy[id]!, row: placement.row, column: placement.column,
+                                          columns: placement.columns, rows: placement.rows)
         }
-        placed = next
+        placedCopies = copies
         return output
+    }
+
+    /// On exit: free only this instance's transmitted images (never delete-all,
+    /// which would also free a second instance's images).
+    func exitCommands() -> String {
+        transmitted.sorted().map { KittyGraphics.freeImage(id: $0) }.joined()
     }
 
     private static func rasterize(source: String, key: String, theme: String, scale: Int) -> (ImagePNG?, String?) {

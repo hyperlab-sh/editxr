@@ -8,13 +8,16 @@ import Musl
 #endif
 
 enum KittyGraphics {
-    // Lowercase a deletes placements, retaining transmitted image data.
-    static let deletePlacements = "\u{1B}_Ga=d,d=a,q=2\u{1B}\\"
-
     /// Deletes the placements of one image id only (lowercase i keeps its data),
     /// so a second editxr instance sharing the terminal keeps its own images.
     static func deleteImage(id: UInt32) -> String {
         "\u{1B}_Ga=d,d=i,i=\(id),q=2\u{1B}\\"
+    }
+
+    /// Deletes one image id's placements and frees its data (uppercase I), so
+    /// exiting never frees another instance's images.
+    static func freeImage(id: UInt32) -> String {
+        "\u{1B}_Ga=d,d=I,i=\(id),q=2\u{1B}\\"
     }
 
     static func supported(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
@@ -38,9 +41,10 @@ enum KittyGraphics {
         return output
     }
 
-    static func place(id: UInt32, row: Int, column: Int, columns: Int, rows: Int) -> String {
+    /// Re-sending the same `i`+`p` replaces that placement in place (no flicker).
+    static func place(id: UInt32, placement: Int, row: Int, column: Int, columns: Int, rows: Int) -> String {
         // C=1 prevents the placement moving the terminal cursor.
-        "\u{1B}[\(row);\(column)H\u{1B}_Ga=p,i=\(id),c=\(columns),r=\(rows),C=1,q=2\u{1B}\\"
+        "\u{1B}[\(row);\(column)H\u{1B}_Ga=p,i=\(id),p=\(placement),c=\(columns),r=\(rows),C=1,q=2\u{1B}\\"
     }
 
     static func cellPixels() -> (Double, Double) {

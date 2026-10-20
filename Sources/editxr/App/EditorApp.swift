@@ -1064,7 +1064,7 @@ class EditorApp {
 
     private func exitAlternateScreen() {
         if inlineImagesEnabledForTest ?? InlineImages.enabled {
-            print("\u{1B}_Ga=d,d=A,q=2\u{1B}\\", terminator: "")
+            print(images.exitCommands(), terminator: "")
         }
         // Restore the terminal's default foreground/background (undo OSC 10/11).
         if terminalTrueColor {
@@ -1598,7 +1598,7 @@ class EditorApp {
 
     /// One frame's bytes. Wrapped in synchronized-update mode (?2026) so the
     /// terminal shows it atomically — no flicker/tearing while repainting big
-    /// frames. Images are diffed per id (never delete-all), so a second editxr
+    /// frames. Images are deleted per id (never delete-all), so a second editxr
     /// sharing the terminal keeps its placements.
     private func frame(width: Int, height: Int) -> String {
         let output = renderEditor(width: width, height: height)

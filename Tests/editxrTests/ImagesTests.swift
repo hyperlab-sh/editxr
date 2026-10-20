@@ -27,8 +27,8 @@ final class ImagesTests: XCTestCase {
         XCTAssertTrue(chunks[1].contains("m=1;"))
         XCTAssertTrue(chunks[2].contains("m=0;"))
         XCTAssertTrue(chunks.allSatisfy { $0.components(separatedBy: ";").last!.utf8.count <= 4096 })
-        XCTAssertTrue(KittyGraphics.place(id: 7, row: 4, column: 2, columns: 20, rows: 8).contains("\u{1B}[4;2H"))
-        XCTAssertTrue(KittyGraphics.deletePlacements.contains("a=d,d=a"))
+        XCTAssertEqual(KittyGraphics.place(id: 7, placement: 2, row: 4, column: 2, columns: 20, rows: 8),
+                       "\u{1B}[4;2H\u{1B}_Ga=p,i=7,p=2,c=20,r=8,C=1,q=2\u{1B}\\")
     }
 
     func testLayoutContributionAndCursorReveal() throws {
@@ -81,12 +81,11 @@ final class ImagesTests: XCTestCase {
         let placement = Images.Placement(image: ready, row: 3, column: 2, columns: 10, rows: 5)
         let first = service.commands([placement])
         XCTAssertTrue(first.contains("a=t"))
-        XCTAssertTrue(first.contains("a=p,i=99"))
+        XCTAssertTrue(first.contains("a=p,i=99,p=1"))
         // Removed, then shown again: placed anew but never re-transmitted.
         XCTAssertEqual(service.commands([]), KittyGraphics.deleteImage(id: 99))
-        let again = service.commands([placement])
-        XCTAssertFalse(again.contains("a=t"))
-        XCTAssertTrue(again.contains("a=p,i=99"))
+        XCTAssertEqual(service.commands([placement]),
+                       KittyGraphics.place(id: 99, placement: 1, row: 3, column: 2, columns: 10, rows: 5))
     }
 
     func testIdsStartAtTheBase() {
@@ -108,31 +107,80 @@ final class ImagesTests: XCTestCase {
         XCTAssertNil(Images.idBase(in: ["editxr", "--image-id-base=99999999999"]))
     }
 
-    func testCommandsEmitOnlyTheDelta() {
+    func testCommandsReplaceEveryPlacementAndDeleteOnlyVanishedIds() {
         let service = Images(idBase: 500)
         let image = service.register(ImagePNG(data: Data([1, 2, 3]), width: 1, height: 1))
-        let delete = KittyGraphics.deleteImage(id: image.id)
         let at = { (row: Int) in Images.Placement(image: image, row: row, column: 2, columns: 10, rows: 5) }
+        let place = { (row: Int) in KittyGraphics.place(id: 500, placement: 1, row: row, column: 2, columns: 10, rows: 5) }
 
-        let frame1 = service.commands([at(3)])
-        XCTAssertTrue(frame1.contains("a=t,f=100,t=d,i=500"))
-        XCTAssertTrue(frame1.contains(KittyGraphics.place(id: 500, row: 3, column: 2, columns: 10, rows: 5)))
-        XCTAssertFalse(frame1.contains("a=d"))
-
-        XCTAssertEqual(service.commands([at(3)]), "")
-
-        let frame3 = service.commands([at(4)])
-        XCTAssertFalse(frame3.contains("a=t"))
-        let place = KittyGraphics.place(id: 500, row: 4, column: 2, columns: 10, rows: 5)
-        XCTAssertEqual(frame3, delete + place)
-
-        // Same row, resized: also a move.
-        let resized = Images.Placement(image: image, row: 4, column: 2, columns: 8, rows: 4)
-        XCTAssertEqual(service.commands([resized]),
-                       delete + KittyGraphics.place(id: 500, row: 4, column: 2, columns: 8, rows: 4))
-
-        XCTAssertEqual(service.commands([]), delete)
+        XCTAssertEqual(service.commands([at(3)]), KittyGraphics.transmit(image.png.data, id: 500) + place(3))
+        // Unchanged: re-placed (same i+p replaces in place), never re-transmitted.
+        XCTAssertEqual(service.commands([at(3)]), place(3))
+        // Moved: re-placed with the same i+p, no delete.
+        XCTAssertEqual(service.commands([at(4)]), place(4))
+        // Resized in place: same rule.
+        XCTAssertEqual(service.commands([Images.Placement(image: image, row: 4, column: 2, columns: 8, rows: 4)]),
+                       KittyGraphics.place(id: 500, placement: 1, row: 4, column: 2, columns: 8, rows: 4))
+        XCTAssertEqual(service.commands([]), KittyGraphics.deleteImage(id: 500))
         XCTAssertEqual(service.commands([]), "")
+    }
+
+    func testDeltaWithTwoIdsTouchesOnlyTheChangedOne() {
+        let service = Images()
+        let png = ImagePNG(data: Data([1, 2, 3]), width: 1, height: 1)
+        let a = service.register(png), b = service.register(png)
+        let placeA = Images.Placement(image: a, row: 2, column: 1, columns: 10, rows: 4)
+        let placeB = Images.Placement(image: b, row: 8, column: 1, columns: 10, rows: 4)
+        let first = service.commands([placeA, placeB])
+        XCTAssertTrue(first.contains("a=t,f=100,t=d,i=\(a.id),"))
+        XCTAssertTrue(first.contains("a=t,f=100,t=d,i=\(b.id),"))
+        XCTAssertEqual(service.commands([placeB]),
+                       KittyGraphics.deleteImage(id: a.id)
+                       + KittyGraphics.place(id: b.id, placement: 1, row: 8, column: 1, columns: 10, rows: 4))
+    }
+
+    func testDuplicateCopiesAreSeparatePlacements() {
+        let service = Images()
+        let image = service.register(ImagePNG(data: Data([1, 2, 3]), width: 1, height: 1))
+        let at = { (row: Int) in Images.Placement(image: image, row: row, column: 1, columns: 10, rows: 4) }
+        let place = { (copy: Int, row: Int) in
+            KittyGraphics.place(id: image.id, placement: copy, row: row, column: 1, columns: 10, rows: 4)
+        }
+        XCTAssertEqual(service.commands([at(2), at(9)]),
+                       KittyGraphics.transmit(image.png.data, id: image.id) + place(1, 2) + place(2, 9))
+        XCTAssertEqual(service.commands([at(2), at(9)]), place(1, 2) + place(2, 9))
+        // Copy count shrank: delete the whole id, re-place the survivors.
+        XCTAssertEqual(service.commands([at(9)]), KittyGraphics.deleteImage(id: image.id) + place(1, 9))
+        // Growing back needs no delete.
+        XCTAssertEqual(service.commands([at(2), at(9)]), place(1, 2) + place(2, 9))
+    }
+
+    func testDuplicateImagePathRendersBothCopies() throws {
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let path = directory.appendingPathComponent("agent/fixtures/sample.png").path
+        let file = NSTemporaryDirectory() + "images-dup-\(UUID().uuidString).md"
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        try "top\n![a](\(path))\nmiddle\n![b](\(path))\nend\n".write(toFile: file, atomically: true, encoding: .utf8)
+        let state = EditorState(filePath: file)
+        state.sidebarMode = .off
+        state.document.cursorLine = 0
+        let app = EditorApp(states: [state], images: Images(idBase: 3_000_000))
+        app.inlineImagesEnabledForTest = true
+        let output = app.renderOutputForTest(width: 80, height: 60)
+        XCTAssertEqual(output.components(separatedBy: "a=t,f=100,t=d,i=3000000,").count - 1, 1)
+        XCTAssertTrue(output.contains("a=p,i=3000000,p=1,"))
+        XCTAssertTrue(output.contains("a=p,i=3000000,p=2,"))
+    }
+
+    func testExitCommandsFreeOnlyTransmittedIds() {
+        let service = Images(idBase: 40)
+        let png = ImagePNG(data: Data([1, 2, 3]), width: 1, height: 1)
+        let a = service.register(png), _ = service.register(png), c = service.register(png)
+        XCTAssertEqual(service.exitCommands(), "")
+        _ = service.commands([Images.Placement(image: c, row: 1, column: 1, columns: 2, rows: 2),
+                              Images.Placement(image: a, row: 5, column: 1, columns: 2, rows: 2)])
+        XCTAssertEqual(service.exitCommands(), KittyGraphics.freeImage(id: 40) + KittyGraphics.freeImage(id: 42))
+        XCTAssertFalse(service.exitCommands().contains("d=A"))
     }
 
     func testDeleteUsesIdsNotDeleteAll() throws {
@@ -150,8 +198,9 @@ final class ImagesTests: XCTestCase {
         XCTAssertTrue(first.contains("a=p,i=2000000"))
         XCTAssertFalse(first.contains("a=d,d=a"))
         let second = app.renderOutputForTest(width: 80, height: 30)
-        XCTAssertFalse(second.contains("a=d,d=a"))
-        XCTAssertFalse(second.contains("a=p"))
+        XCTAssertFalse(second.contains("a=d"))
+        XCTAssertFalse(second.contains("a=t"))
+        XCTAssertTrue(second.contains("a=p,i=2000000,p=1,"))
         state.document.cursorLine = 1
         let revealed = app.renderOutputForTest(width: 80, height: 30)
         XCTAssertFalse(revealed.contains("a=d,d=a"))
