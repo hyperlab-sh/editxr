@@ -1,8 +1,8 @@
 import XCTest
 @testable import editxr
 
-/// Tab cycles tasks, promotes headings, and otherwise inserts a native tab.
-/// Selections indent, Shift+Tab outdents, and Alt+S focuses the sidebar.
+/// Tab cycles tasks, demotes headings, and otherwise inserts a native tab.
+/// Selections indent, Shift+Tab outdents (promotes on headings), and Alt+S focuses the sidebar.
 final class TabKeyTests: XCTestCase {
 
     private func makeApp(_ content: String, cursorLine: Int = 0,
@@ -87,9 +87,15 @@ final class TabKeyTests: XCTestCase {
         XCTAssertTrue(frame.contains("^T/Tab toggle task"))
     }
 
-    func testTabPromotesAHeading() {
-        let (app, state) = makeApp("## Title\nbody")
+    func testTabDemotesAHeading() {
+        let (app, state) = makeApp("# Title\nbody")
         app.handleInputForTest("\t")
+        XCTAssertEqual(state.document.lines[0], "## Title")
+    }
+
+    func testShiftTabPromotesAHeading() {
+        let (app, state) = makeApp("## Title\nbody")
+        app.handleInputForTest(shiftTab)
         XCTAssertEqual(state.document.lines[0], "# Title")
     }
 

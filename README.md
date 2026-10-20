@@ -77,7 +77,7 @@ This is a **test** with *markdown*.
   to alternate between the two).
 - **Tabs and indentation.** `Tab` indents the selection (or inserts a literal
   tab) and `Shift+Tab` outdents. Without a selection, `Tab` cycles a task's
-  state (`[ ]` → `[*]` → `[x]` → `[ ]`); on a heading they promote / demote instead.
+  state (`[ ]` → `[*]` → `[x]` → `[ ]`); on a heading they demote / promote instead.
   The tab width is configurable (default 8) and tabs are measured into the wrap
   math, so the layout and the caret stay in sync. Pasted text with CR/CRLF line
   endings is normalized on the way in, so it can't shear the screen.
@@ -193,8 +193,8 @@ auto-detection also fall back for now.
 | `Ctrl+]` | Follow link under cursor (or click a link) |
 | `Ctrl+[` / `Esc` | Back to the previous file |
 | `Ctrl+T` | Cycle task state (`[ ]` → `[*]` → `[x]`) |
-| `Tab` | Indent selection; otherwise cycle task state, promote heading, or insert tab |
-| `Shift+Tab` | Outdent (on a heading: demote) |
+| `Tab` | Indent selection; otherwise cycle task state, demote heading, or insert tab |
+| `Shift+Tab` | Outdent (on a heading: promote) |
 | `⌥S` | Focus the sidebar (outline / file tree) |
 | `Ctrl+L` | Toggle line numbers |
 | `Ctrl+P` | Command palette / settings |

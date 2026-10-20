@@ -524,7 +524,7 @@ class EditorState {
     // MARK: - Tab: indent / outdent
 
     /// Tab in the editor: insert a native tab at the caret, or indent every line
-    /// the selection touches. Headings are handled by the caller, which promotes
+    /// the selection touches. Headings are handled by the caller, which demotes
     /// them instead (indenting a heading is meaningless).
     func handleTab() {
         saveSnapshot()

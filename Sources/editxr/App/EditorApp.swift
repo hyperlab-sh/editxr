@@ -747,8 +747,8 @@ class EditorApp {
             row("Paste", "^V"),
             row("Delete word back", "^H / ⌥⌫"),
             row("Cycle task state", "^T"),
-            row("Cycle task / promote heading / indent", "Tab"),
-            row("Outdent (heading: demote)", "⇧Tab"),
+            row("Cycle task / demote heading / indent", "Tab"),
+            row("Outdent (heading: promote)", "⇧Tab"),
         ]
         if capabilities.sidebar { cmds.append(row("Focus sidebar", "⌥S")) }
         if aiEnabled { cmds.append(row("AI assist", "^Space")) }
@@ -1392,7 +1392,7 @@ class EditorApp {
                 if state.cursorLineIsTask && !state.document.hasSelection {
                     state.cycleTaskState()
                 } else if state.cursorHeadingLevel != nil {
-                    state.adjustHeadingLevel(by: -1)
+                    state.adjustHeadingLevel(by: 1)
                 } else {
                     state.handleTab()
                 }
@@ -1629,9 +1629,9 @@ class EditorApp {
         case .shiftPageDown:
             state.pageDown(viewportHeight: viewportHeight, selecting: true)
         case .shiftTab:
-            // Headings demote (# → ## → ###); every other line outdents.
+            // Headings promote (### → ## → #); every other line outdents.
             if state.cursorHeadingLevel != nil {
-                state.adjustHeadingLevel(by: 1)
+                state.adjustHeadingLevel(by: -1)
             } else {
                 state.handleOutdent()
             }
