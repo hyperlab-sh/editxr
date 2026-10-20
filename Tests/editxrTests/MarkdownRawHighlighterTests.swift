@@ -15,8 +15,9 @@ final class MarkdownRawHighlighterTests: XCTestCase {
         RawSpan(start: start, end: end, kind: kind)
     }
 
-    private func makeApp(_ content: String, cursorLine: Int, wordWrap: Bool) -> EditorApp {
-        let tmp = NSTemporaryDirectory() + "editxr-raw-\(UUID().uuidString).md"
+    private func makeApp(_ content: String, cursorLine: Int, wordWrap: Bool,
+                         ext: String = "md") -> EditorApp {
+        let tmp = NSTemporaryDirectory() + "editxr-raw-\(UUID().uuidString).\(ext)"
         try? content.write(toFile: tmp, atomically: true, encoding: .utf8)
         let state = EditorState(filePath: tmp)
         state.viewMode = .raw
@@ -92,6 +93,9 @@ final class MarkdownRawHighlighterTests: XCTestCase {
         XCTAssertEqual(spans("> > *q*"), [s(0, 1, .quoteMark), s(2, 3, .quoteMark),
                                          s(4, 5, .emphasisMark), s(6, 7, .emphasisMark)])
         XCTAssertEqual(spans("> - item"), [s(0, 1, .quoteMark), s(2, 3, .listMark)])
+        // "> # Quoted `x`": the remainder's "# " must not swallow inline spans.
+        XCTAssertEqual(spans("> # Quoted `x`"), [s(0, 1, .quoteMark), s(11, 14, .inlineCode)])
+        XCTAssertEqual(spans("- # foo `x`"), [s(0, 1, .listMark), s(8, 11, .inlineCode)])
         XCTAssertEqual(spans("---"), [s(0, 3, .rule)])
         XCTAssertEqual(spans("* * *"), [s(0, 5, .rule)])
         XCTAssertEqual(spans("___"), [s(0, 3, .rule)])
@@ -117,7 +121,7 @@ final class MarkdownRawHighlighterTests: XCTestCase {
     // The cursor sits on line 0 so the render does not scroll the rows under
     // test out of view.
     func testRawModeRendersStyledLines() {
-        let app = makeApp("cursor here\n# T\nbody `x`", cursorLine: 0, wordWrap: false)
+        let app = makeApp("# C cursor\n# T\nbody `x`", cursorLine: 0, wordWrap: false)
         let rows = app.renderEditorLinesForTest(width: 60, height: 10)
         let heading = row(rows, containing: "# T")
         XCTAssertNotNil(heading)
@@ -126,9 +130,29 @@ final class MarkdownRawHighlighterTests: XCTestCase {
         let body = row(rows, containing: "body")
         XCTAssertTrue(body?.contains(Theme.string + "`x`") ?? false, "inline code styled")
         // Cursor line keeps renderLineRaw: no markdown styling applied.
-        let cursor = row(rows, containing: "ursor here")
+        let cursor = row(rows, containing: "# C cursor")  // top bar shows the title without "#"
         XCTAssertNotNil(cursor)
-        XCTAssertFalse(cursor?.contains(Theme.textPrimary + "ursor") ?? true)
+        XCTAssertFalse(cursor?.contains(Theme.heading1) ?? true, "cursor line must not be highlighted")
+    }
+
+    func testRawModeDoesNotHighlightNonMarkdownFiles() {
+        for ext in ["py", "txt", "yaml"] {
+            let app = makeApp("cursor\n# comment\n- item\n---", cursorLine: 0, wordWrap: false, ext: ext)
+            let rows = app.renderEditorLinesForTest(width: 60, height: 10)
+            let comment = row(rows, containing: "# comment")
+            XCTAssertNotNil(comment, ext)
+            XCTAssertFalse(comment?.contains(Theme.heading1) ?? true, ext)
+            XCTAssertFalse(row(rows, containing: "- item")?.contains(Theme.accent + "-") ?? true, ext)
+        }
+    }
+
+    func testMarkdownPathDetection() {
+        for p in ["a.md", "A.MD", "x/b.markdown", "c.mdx", "d.mkd"] {
+            XCTAssertTrue(EditorState.isMarkdownPath(p), p)
+        }
+        for p in ["a.txt", "a.py", "README", "", "a.md.bak"] {
+            XCTAssertFalse(EditorState.isMarkdownPath(p), p)
+        }
     }
 
     func testRawModeWrappedStylesBothFragments() {

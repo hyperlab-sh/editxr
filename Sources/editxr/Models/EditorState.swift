@@ -88,6 +88,18 @@ class EditorState {
     /// Syntax highlighter for non-Markdown files (nil → render as Markdown).
     let syntaxHighlighter: SyntaxHighlighter?
 
+    /// File extensions treated as Markdown (raw-view highlighting, file icon).
+    static let markdownExtensions: Set<String> = ["md", "markdown", "mdx", "mkd"]
+
+    /// True when `path` has a Markdown extension. Extensionless / untitled
+    /// paths are not Markdown.
+    static func isMarkdownPath(_ path: String) -> Bool {
+        markdownExtensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    /// Whether this buffer is a Markdown file (by extension).
+    var isMarkdown: Bool { Self.isMarkdownPath(filePath) }
+
     var llmProvider: LLMProvider = .lmStudio
     private(set) var openRouterKey: String? = nil
     private(set) var openRouterModel: String? = nil

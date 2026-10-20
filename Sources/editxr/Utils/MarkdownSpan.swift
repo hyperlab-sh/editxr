@@ -35,7 +35,12 @@ struct MarkdownLineParser {
         if let headingSpan = parseHeading(line) {
             return [headingSpan]
         }
-        
+        return parseInline(line)
+    }
+
+    /// Inline spans only (bold, italic, code, links) — no heading detection.
+    /// For text after a block prefix such as "- " or "> ".
+    static func parseInline(_ line: String) -> [MarkdownSpan] {
         var spans: [MarkdownSpan] = []
         let chars = Array(line)
         var i = 0

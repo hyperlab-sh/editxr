@@ -3360,9 +3360,9 @@ class EditorApp {
         let startLine = state.scrollOffset
         let endLine = min(doc.lines.count, startLine + height)
 
-        // Markdown highlighting (not for code files). Fence state is carried
+        // Markdown highlighting (Markdown files only). Fence state is carried
         // from line 0 so a fence opened above the viewport still marks code.
-        let highlight = state.syntaxHighlighter == nil
+        let highlight = state.isMarkdown
         var hl = MarkdownRawHighlighter()
         if highlight {
             for i in 0..<min(startLine, doc.lines.count) { hl.advance(past: doc.lines[i]) }
@@ -3400,7 +3400,7 @@ class EditorApp {
         let selection = doc.selectionRange
         
         var visualLine = 0
-        let highlight = state.syntaxHighlighter == nil
+        let highlight = state.isMarkdown
         var hl = MarkdownRawHighlighter()
         
         for i in 0..<doc.lines.count {
@@ -3772,8 +3772,8 @@ class EditorApp {
     /// Nerd Font glyph for the open file, by extension (markdown gets its mark,
     /// other text files a generic document icon).
     private func fileIcon(for path: String) -> String {
+        if EditorState.isMarkdownPath(path) { return "\u{f48a}" }  // markdown
         switch (path as NSString).pathExtension.lowercased() {
-        case "md", "markdown", "mdx", "mkd": return "\u{f48a}"  // markdown
         case "json":                         return "\u{e60b}"  // json
         case "swift":                        return "\u{e755}"  // swift
         case "sh", "bash", "zsh":            return "\u{f489}"  // terminal

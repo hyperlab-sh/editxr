@@ -163,15 +163,18 @@ struct MarkdownRawHighlighter {
 
     // MARK: - Inline constructs
 
-    /// Inline spans of `chars[from...]` via `MarkdownLineParser`, shifted back
+    /// Inline spans of `chars[from...]` via `MarkdownLineParser.parseInline`, shifted back
     /// to line offsets.
     private static func inline(_ chars: [Character], from: Int) -> [RawSpan] {
         guard from < chars.count else { return [] }
         let rest = String(chars[from...])
         var out: [RawSpan] = []
-        for sp in MarkdownLineParser.parse(rest).sorted(by: { $0.rawStart < $1.rawStart }) {
-            let rs = from + sp.rawStart, re = from + sp.rawEnd
-            let cs = from + sp.contentStart, ce = from + sp.contentEnd
+        // Inline-only: a list/quote remainder starting with "# " must not be
+        // swallowed by heading detection.
+        let base = from
+        for sp in MarkdownLineParser.parseInline(rest).sorted(by: { $0.rawStart < $1.rawStart }) {
+            let rs = base + sp.rawStart, re = base + sp.rawEnd
+            let cs = base + sp.contentStart, ce = base + sp.contentEnd
             switch sp.kind {
             case .bold, .italic:
                 out.append(RawSpan(start: rs, end: cs, kind: .emphasisMark))
@@ -186,7 +189,7 @@ struct MarkdownRawHighlighter {
                     out.append(RawSpan(start: ce + 1, end: re, kind: .linkUrl))   // (url)
                 }
             case .heading1, .heading2, .heading3:
-                continue   // only possible at line start, handled by `heading`
+                continue   // parseInline never produces headings
             }
         }
         return out
