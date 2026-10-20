@@ -21,6 +21,9 @@ enum LaunchArguments {
         /// rendered view). Nil when absent or the value is unrecognised. Applies
         /// to this run only; it is never saved to the config.
         var view: ViewMode? = nil
+        /// File named by `--capabilities=<toml>` (see Capabilities). Nil when
+        /// absent or the value is empty.
+        var capabilitiesPath: String? = nil
     }
 
     /// Classify the arguments. `vaultArgIndex` is the argument offset of the
@@ -47,14 +50,21 @@ enum LaunchArguments {
             }
         }
         var view: ViewMode? = nil
+        var capabilitiesPath: String? = nil
         for arg in arguments.dropFirst() {
             switch arg {
             case "--view=raw": view = .raw
             case "--view=rendered": view = .normal
-            default: if arg.hasPrefix("--view=") { view = nil }
+            default:
+                if arg.hasPrefix("--view=") { view = nil }
+                if arg.hasPrefix(Capabilities.flag) {
+                    let value = String(arg.dropFirst(Capabilities.flag.count))
+                    capabilitiesPath = value.isEmpty ? nil : value
+                }
             }
         }
-        return Parse(filePaths: filePaths, directoryRoot: directoryRoot, openVault: openVault, view: view)
+        return Parse(filePaths: filePaths, directoryRoot: directoryRoot, openVault: openVault,
+                     view: view, capabilitiesPath: capabilitiesPath)
     }
 
     /// Build the tabs an invocation opens. Opening a directory with no file
@@ -67,7 +77,10 @@ enum LaunchArguments {
     /// A bare `--vault` behaves the same way against `vaultRoot` (the configured
     /// vault, resolved by the caller). When no vault is configured the caller
     /// passes nil and this returns no states, so `main` falls back to help.
-    static func makeStates(from parse: Parse, vaultRoot: String? = nil) -> [EditorState] {
+    ///
+    /// `sidebarAllowed: false` (the `sidebar` capability is off) skips turning
+    /// the file-explorer sidebar on for a directory launch.
+    static func makeStates(from parse: Parse, vaultRoot: String? = nil, sidebarAllowed: Bool = true) -> [EditorState] {
         var filePaths = parse.filePaths
         var root = parse.directoryRoot
 
@@ -85,7 +98,7 @@ enum LaunchArguments {
         }
 
         let states = filePaths.map { EditorState(filePath: $0) }
-        if root != nil {
+        if root != nil, sidebarAllowed {
             for st in states { st.sidebarMode = .files }
         }
         return states

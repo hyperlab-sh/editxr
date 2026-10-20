@@ -63,7 +63,21 @@ if launch.openVault, let path = Config.load().vaultPath, !path.isEmpty {
     configuredVaultRoot = Vault.standardized(path)
 }
 
-let states = LaunchArguments.makeStates(from: launch, vaultRoot: configuredVaultRoot)
+// --capabilities=<toml> switches editor features off for this run. A file that
+// can't be read or parsed is a hard error: silently running with everything on
+// would defeat a host that relies on the gates (e.g. a read-only preview).
+var capabilities = Capabilities()
+if let path = launch.capabilitiesPath {
+    do {
+        capabilities = try Capabilities.load(path: path)
+    } catch {
+        FileHandle.standardError.write(Data("editxr: capabilities \(path): \(error)\n".utf8))
+        exit(2)
+    }
+}
+
+let states = LaunchArguments.makeStates(from: launch, vaultRoot: configuredVaultRoot,
+                                        sidebarAllowed: capabilities.sidebar)
 guard !states.isEmpty else {
     print(AppInfo.helpText)
     exit(1)
@@ -81,4 +95,5 @@ let app = EditorApp(states: states, images: Images.idBase(in: arguments).map { I
 if let path = Mirror.path(in: arguments) {
     app.mirror = Mirror(path: path, state: states[0])
 }
+app.capabilities = capabilities
 app.start()

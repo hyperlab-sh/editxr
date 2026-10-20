@@ -60,6 +60,15 @@ class EditorApp {
     private var state: EditorState { states[activeTab] }
     /// Set by `--mirror=<path>`; see Mirror.
     var mirror: Mirror?
+    /// Features switched off for this run by `--capabilities=<toml>`; set by
+    /// `main` before `start()`. Everything is on by default.
+    var capabilities = Capabilities()
+    /// The AI gate: compiled in (AIFeature) and not switched off for the run.
+    private var aiEnabled: Bool { AIFeature.enabled && capabilities.ai }
+    /// Fixed chrome rows around the content: the top bar, plus the status and
+    /// hint rows unless the status line is switched off. The tab strip, the big
+    /// status box and the AI prompt are added on top by `renderEditor`.
+    var chromeRows: Int { 1 + (capabilities.statusLine ? 2 : 0) }
     private let images: Images
     var inlineImagesEnabledForTest: Bool?
     private var imageBlocks: [Int: (block: InlineImages.Block, image: Images.Ready, columns: Int, rows: Int)] = [:]
@@ -203,20 +212,24 @@ class EditorApp {
             : PaletteCommand(title: "Reload from disk", shortcut: "") { [weak self] in self?.reloadActive() }
 
         cmds.append(.header("File"))
-        cmds += [
+        if capabilities.quickOpen {
             // keepsOpen so activating it swaps the panel into the file switcher
             // (a fresh scan) instead of closing — the scan only runs on demand.
-            PaletteCommand(title: "Open file", shortcut: "^O", keepsOpen: true) { [weak self] in self?.openQuickSwitcher() },
+            cmds.append(PaletteCommand(title: "Open file", shortcut: "^O", keepsOpen: true) { [weak self] in self?.openQuickSwitcher() })
+        }
+        cmds += [
             // keepsOpen so the panel can swap itself into the name prompt.
             PaletteCommand(title: "New file…", shortcut: "", keepsOpen: true) { [weak self] in self?.promptNewFile() },
             PaletteCommand(title: "Follow link under cursor", shortcut: "^]") { [weak self] in self?.followLinkUnderCursor() },
             PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
             reloadCmd,
-            PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
-            PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() },
         ]
+        if capabilities.export {
+            cmds.append(PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() })
+        }
+        cmds.append(PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() })
 
-        if states.count > 1 {
+        if capabilities.tabs && states.count > 1 {
             cmds.append(.spacer)
             cmds.append(.header("Tabs"))
             cmds += [
@@ -236,9 +249,11 @@ class EditorApp {
             PaletteCommand(title: "Redo", shortcut: "^Y") { [weak self] in self?.state.redo() },
             PaletteCommand(title: "Indent / insert tab", shortcut: "Tab") { [weak self] in self?.state.handleTab() },
             PaletteCommand(title: "Outdent", shortcut: "⇧Tab") { [weak self] in self?.state.handleOutdent() },
-            PaletteCommand(title: "Focus sidebar", shortcut: "⌥S") { [weak self] in self?.focusSidebar() },
-            PaletteCommand(title: "Clear all", shortcut: "") { [weak self] in self?.state.clearAll() },
         ]
+        if capabilities.sidebar {
+            cmds.append(PaletteCommand(title: "Focus sidebar", shortcut: "⌥S") { [weak self] in self?.focusSidebar() })
+        }
+        cmds.append(PaletteCommand(title: "Clear all", shortcut: "") { [weak self] in self?.state.clearAll() })
 
         // Nested submenus need no header — the entry title speaks for itself.
         cmds.append(.spacer)
@@ -251,15 +266,15 @@ class EditorApp {
             PaletteCommand(title: "Go to bottom", shortcut: "End") { [weak self] in self?.state.goToBottom() },
             PaletteCommand(title: "Page up", shortcut: "PgUp") { [weak self] in
                 guard let self = self else { return }
-                self.state.pageUp(viewportHeight: self.getTerminalSize().height - 3)
+                self.state.pageUp(viewportHeight: self.getTerminalSize().height - self.chromeRows)
             },
             PaletteCommand(title: "Page down", shortcut: "PgDn") { [weak self] in
                 guard let self = self else { return }
-                self.state.pageDown(viewportHeight: self.getTerminalSize().height - 3)
+                self.state.pageDown(viewportHeight: self.getTerminalSize().height - self.chromeRows)
             },
         ]
 
-        if AIFeature.enabled {
+        if aiEnabled {
             cmds.append(.spacer)
             cmds.append(.header("AI"))
             cmds += [
@@ -268,9 +283,11 @@ class EditorApp {
             ]
         }
 
-        cmds.append(.spacer)
-        cmds.append(.header("Vault"))
-        cmds += vaultMenuCommands()
+        if capabilities.vault {
+            cmds.append(.spacer)
+            cmds.append(.header("Vault"))
+            cmds += vaultMenuCommands()
+        }
 
         cmds.append(.spacer)
         cmds.append(submenuCommand("Theme & appearance") { [weak self] in self?.themeMenuCommands() ?? [] })
@@ -702,19 +719,25 @@ class EditorApp {
         func row(_ title: String, _ shortcut: String) -> PaletteCommand {
             PaletteCommand(title: title, shortcut: shortcut, action: {})
         }
-        return [
-            .header("File"),
-            row("Open file", "^O"),
-            row("Save", "^S"),
-            row("Export to HTML", "^E"),
-            row("Follow link under cursor", "^]"),
-            row("Vault", "^K"),
+        var cmds: [PaletteCommand] = [.header("File")]
+        if capabilities.quickOpen { cmds.append(row("Open file", "^O")) }
+        cmds.append(row("Save", "^S"))
+        if capabilities.export { cmds.append(row("Export to HTML", "^E")) }
+        cmds.append(row("Follow link under cursor", "^]"))
+        if capabilities.vault { cmds.append(row("Vault", "^K")) }
+        cmds += [
             row("Command palette", "^P"),
             row("Quit", "^Q / ^D"),
-            .spacer, .header("Tabs"),
-            row("Next tab", "^N"),
-            row("Back / previous tab", "esc"),
-            row("Close tab", "^W"),
+        ]
+        if capabilities.tabs {
+            cmds += [
+                .spacer, .header("Tabs"),
+                row("Next tab", "^N"),
+                row("Back / previous tab", "esc"),
+                row("Close tab", "^W"),
+            ]
+        }
+        cmds += [
             .spacer, .header("Edit"),
             row("Select all", "^A"),
             row("Undo", "^U"),
@@ -726,38 +749,55 @@ class EditorApp {
             row("Cycle task state", "^T"),
             row("Cycle task / promote heading / indent", "Tab"),
             row("Outdent (heading: demote)", "⇧Tab"),
-            row("Focus sidebar", "⌥S"),
-        ] + (AIFeature.enabled ? [row("AI assist", "^Space")] : []) + [
+        ]
+        if capabilities.sidebar { cmds.append(row("Focus sidebar", "⌥S")) }
+        if aiEnabled { cmds.append(row("AI assist", "^Space")) }
+        cmds += [
             .spacer, .header("Find"),
             row("Find", "^F"),
             row("Find next", "^G"),
             .spacer, .header("View"),
             row("Toggle raw view", "^R"),
             row("Toggle line numbers", "^L"),
-            row("Cycle focus mode", "^B"),
+        ]
+        if capabilities.focusMode { cmds.append(row("Cycle focus mode", "^B")) }
+        cmds += [
             row("Keyboard shortcuts (this panel)", "^/"),
             .spacer, .header("Navigate"),
             row("Move cursor", "← ↑ → ↓"),
             row("Top / bottom", "Home / End"),
             row("Page up / down", "PgUp / PgDn"),
         ]
+        return cmds
     }
 
     // MARK: - Editor settings menu
 
     /// View / layout toggles and editing-pane settings, nested under "Editor".
     private func editorMenuCommands() -> [PaletteCommand] {
-        return [
+        var cmds: [PaletteCommand] = [
             toggleCommand("Toggle raw view", "^R") { [weak self] in self?.state.toggleViewMode() },
             toggleCommand("Toggle word wrap", "") { [weak self] in self?.state.toggleWordWrap() },
             toggleCommand("Toggle line numbers", "^L") { [weak self] in self?.state.toggleLineNumbers() },
-            toggleCommand("Focus mode (^B)", state.focusMode.label) { [weak self] in self?.state.cycleFocusMode() },
-            toggleCommand("Toggle scroll past end", "") { [weak self] in self?.state.toggleScrollPastEnd() },
-            toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() },
+        ]
+        if capabilities.focusMode {
+            cmds.append(toggleCommand("Focus mode (^B)", state.focusMode.label) { [weak self] in self?.state.cycleFocusMode() })
+        }
+        cmds.append(toggleCommand("Toggle scroll past end", "") { [weak self] in self?.state.toggleScrollPastEnd() })
+        if capabilities.statusLine {
+            cmds.append(toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() })
+        }
+        cmds += [
             toggleCommand("Toggle contextual hints", state.contextHelp ? "on" : "off") { [weak self] in self?.state.toggleContextHelp() },
             toggleCommand("Toggle block mode", state.blockMode ? "on" : "off") { [weak self] in self?.state.toggleBlockMode() },
-            toggleCommand("Outline sidebar", state.sidebarMode == .outline ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.outline) },
-            toggleCommand("File explorer sidebar", state.sidebarMode == .files ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.files) },
+        ]
+        if capabilities.sidebar {
+            cmds += [
+                toggleCommand("Outline sidebar", state.sidebarMode == .outline ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.outline) },
+                toggleCommand("File explorer sidebar", state.sidebarMode == .files ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.files) },
+            ]
+        }
+        cmds += [
             toggleCommand("Toggle full table borders", "") { [weak self] in self?.state.toggleFullTable() },
             toggleCommand("Align tables to widest", state.alignTables ? "on" : "off") { [weak self] in self?.state.toggleAlignTables() },
             PaletteCommand(title: "Set left margin", shortcut: "\(state.leftMargin)") { [weak self] in
@@ -779,6 +819,7 @@ class EditorApp {
                 }
             },
         ]
+        return cmds
     }
 
     // MARK: - Theme menu
@@ -1238,7 +1279,7 @@ class EditorApp {
         // bytes (re-joined by handleInput's brief hold if the terminal split
         // them across reads), so they don't match this.
         if string == "\u{1B}" {
-            goToPreviousTab()
+            if capabilities.tabs { goToPreviousTab() }
             render()
             return
         }
@@ -1264,9 +1305,11 @@ class EditorApp {
                 }
                 if arrowKeyParser.altSidebar {
                     arrowKeyParser.altSidebar = false
-                    if state.sidebarMode == .off { toggleSidebarMode(.outline) }
-                    focusSidebar()
-                    needsRender = true
+                    if capabilities.sidebar {
+                        if state.sidebarMode == .off { toggleSidebarMode(.outline) }
+                        focusSidebar()
+                        needsRender = true
+                    }
                 }
                 continue
             }
@@ -1294,8 +1337,10 @@ class EditorApp {
                 state.toggleLineNumbers()
                 needsRender = true
             case Key.ctrlB:
-                state.cycleFocusMode()
-                needsRender = true
+                if capabilities.focusMode {
+                    state.cycleFocusMode()
+                    needsRender = true
+                }
             case Key.ctrlV:
                 pasteClipboard()
             case Key.ctrlC:
@@ -1322,18 +1367,22 @@ class EditorApp {
                 state.deleteWordBackward()
                 needsRender = true
             case Key.ctrlJ:
-                closeActiveTab()
-                needsRender = true
+                if capabilities.tabs {
+                    closeActiveTab()
+                    needsRender = true
+                }
             case Key.ctrlT:
                 state.cycleTaskState()
                 needsRender = true
             case Key.ctrlN:
-                switchTab(by: 1)
-                needsRender = true
+                if capabilities.tabs {
+                    switchTab(by: 1)
+                    needsRender = true
+                }
             case Key.ctrlO:
-                openQuickSwitcher()
+                if capabilities.quickOpen { openQuickSwitcher() }
             case Key.ctrlK:
-                openVaultSearch()
+                if capabilities.vault { openVaultSearch() }
             case Key.ctrlRightBracket:
                 followLinkUnderCursor()
             case Key.tab:
@@ -1347,9 +1396,9 @@ class EditorApp {
                 }
                 needsRender = true
             case Key.ctrlSpace:
-                if AIFeature.enabled { showLLMModal() }
+                if aiEnabled { showLLMModal() }
             case Key.ctrlE:
-                exportToHTML()
+                if capabilities.export { exportToHTML() }
             case Key.enter:
                 state.handleNewline()
                 needsRender = true
@@ -1533,7 +1582,7 @@ class EditorApp {
 
     private func handleArrowKey(_ key: ArrowKey) {
         let size = getTerminalSize()
-        let viewportHeight = size.height - 3
+        let viewportHeight = size.height - chromeRows
         
         switch key {
         case .up:
@@ -1663,6 +1712,7 @@ class EditorApp {
     func setSidebarSelectionForTest(_ i: Int) { sidebarSelection = i }
     var sidebarSelectionForTest: Int { sidebarSelection }
     var sidebarFocusedForTest: Bool { sidebarFocused }
+    var sidebarRenderedForTest: Bool { sidebarRendered }
     func sidebarEntryCountForTest() -> Int { sidebarEntries().count }
     func sidebarEntryForTest(_ i: Int) -> (text: String, isDir: Bool, isCollapsed: Bool, path: String) {
         let e = sidebarEntries()[i]; return (e.text, e.isDir, e.isCollapsed, e.path)
@@ -1682,6 +1732,12 @@ class EditorApp {
     func handleInputForTest(_ s: String) { handleInput(Data(s.utf8)) }
     var activeTabForTest: Int { activeTab }
     var tabCountForTest: Int { states.count }
+    // Test hooks: the titles each menu generator produces, pruned the way the
+    // panel shows them, so capability gates can be asserted without rendering.
+    func paletteTitlesForTest() -> [String] { CommandPanel.pruned(buildCommands()).map(\.title) }
+    func shortcutsHelpTitlesForTest() -> [String] { CommandPanel.pruned(shortcutsHelpCommands()).map(\.title) }
+    func editorMenuTitlesForTest() -> [String] { CommandPanel.pruned(editorMenuCommands()).map(\.title) }
+    var commandPanelVisibleForTest: Bool { commandPanel?.isVisible ?? false }
 
     private func gutterWidth() -> Int {
         // The gutter doubles as the configurable left margin.
@@ -1810,18 +1866,20 @@ class EditorApp {
 
     private func renderEditor(width: Int, height: Int) -> String {
         // Top bar (filename + optional markdown title) + status + hint bars.
-        var reservedLines = 3
+        var reservedLines = chromeRows
 
         // A tab strip above the top bar, only when more than one file is open.
-        let showTabs = states.count > 1
+        let showTabs = capabilities.tabs && states.count > 1
         if showTabs { reservedLines += 1 }
 
         // The AI prompt grows the big status box (which hosts it inline); with the
-        // slim bar it falls back to a block stacked above the status line.
+        // slim bar (or no status line) it falls back to a block stacked below
+        // the content.
+        let statusBarBig = capabilities.statusLine && state.statusBarBig
         let modalVisible = llmModal?.isVisible ?? false
-        let modalLines = (modalVisible && !state.statusBarBig) ? (llmModal?.render(width: width) ?? []) : []
+        let modalLines = (modalVisible && !statusBarBig) ? (llmModal?.render(width: width) ?? []) : []
         reservedLines += modalLines.count
-        if state.statusBarBig {
+        if statusBarBig {
             reservedLines += 2   // 3-row rounded box vs the slim 1-row bar
             if modalVisible {
                 reservedLines += llmModal?.statusRows(innerWidth: max(0, width - 4)).count ?? 0
@@ -1888,18 +1946,20 @@ class EditorApp {
             lines.append(padToWidth(modalLine, width: width))
         }
         
-        if state.statusBarBig {
-            for row in renderStatusBarBig(width: width) {
-                lines.append(padToWidth(row, width: width))
+        if capabilities.statusLine {
+            if statusBarBig {
+                for row in renderStatusBarBig(width: width) {
+                    lines.append(padToWidth(row, width: width))
+                }
+            } else {
+                lines.append(padToWidth(renderStatusBar(width: width), width: width))
             }
-        } else {
-            lines.append(padToWidth(renderStatusBar(width: width), width: width))
-        }
 
-        if state.isReviewing {
-            lines.append(padToWidth(renderReviewHintBar(width: width), width: width))
-        } else {
-            lines.append(padToWidth(renderHintBar(width: width), width: width))
+            if state.isReviewing {
+                lines.append(padToWidth(renderReviewHintBar(width: width), width: width))
+            } else {
+                lines.append(padToWidth(renderHintBar(width: width), width: width))
+            }
         }
 
         overlayCommandPanel(into: &lines, width: width, height: height)
@@ -3826,8 +3886,8 @@ class EditorApp {
     private func renderHintBar(width: Int) -> String {
         // Left: the AI provider (and model, if set). Right: command/help shortcuts,
         // right-aligned with one column of padding from the edge.
-        var providerText = AIFeature.enabled ? state.llmProvider.displayName : ""
-        if AIFeature.enabled, state.llmProvider == .openRouter, let model = state.openRouterModel, !model.isEmpty {
+        var providerText = aiEnabled ? state.llmProvider.displayName : ""
+        if aiEnabled, state.llmProvider == .openRouter, let model = state.openRouterModel, !model.isEmpty {
             providerText += " · \(model)"
         }
         let left = "\(Theme.textMuted)\(providerText)\(Theme.reset)"
@@ -3914,7 +3974,7 @@ class EditorApp {
         let size = getTerminalSize()
         let gutter = gutterWidth()
         let viewportWidth = size.width - gutter
-        let viewportHeight = size.height - 3
+        let viewportHeight = size.height - chromeRows
         var wheel = 0
         var changed = false
 
@@ -4208,7 +4268,7 @@ class EditorApp {
     /// Width of the docked sidebar column, or 0 when it's off / the terminal is
     /// too narrow to keep a usable editor column beside it.
     private func sidebarWidth(totalWidth: Int) -> Int {
-        guard state.sidebarMode != .off else { return 0 }
+        guard capabilities.sidebar, state.sidebarMode != .off else { return 0 }
         let desired = min(28, max(16, totalWidth / 4))
         guard totalWidth - desired - 1 >= 24 else { return 0 }
         return desired
@@ -4318,6 +4378,7 @@ class EditorApp {
     /// app-wide — every tab is kept in sync so switching files never hides the
     /// sidebar — and a fresh explorer open starts with all folders collapsed.
     private func toggleSidebarMode(_ mode: SidebarMode) {
+        guard capabilities.sidebar else { return }
         if mode == .files && state.sidebarMode != .files {
             fileTreeScanCache = nil
             collapsedFolders = allFolderPaths()
@@ -4332,6 +4393,7 @@ class EditorApp {
     // MARK: - Sidebar focus & navigation
 
     private func focusSidebar() {
+        guard capabilities.sidebar else { return }
         let entries = sidebarEntries()
         sidebarSelection = entries.firstIndex(where: { $0.isCurrent }) ?? 0
         sidebarFocused = true

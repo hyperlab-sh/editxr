@@ -103,11 +103,34 @@ final class CommandPanel {
         return false
     }
 
+    /// Drop group headers left with no selectable row before the next header
+    /// (or the end), e.g. when a capability switched a whole group off, plus
+    /// the spacers that only separated them: leading, trailing and doubled
+    /// spacers go. A list with no empty group comes back unchanged.
+    static func pruned(_ commands: [PaletteCommand]) -> [PaletteCommand] {
+        var kept: [PaletteCommand] = []
+        for (i, cmd) in commands.enumerated() {
+            if cmd.isHeader {
+                let rest = commands[(i + 1)...]
+                let groupEnd = rest.firstIndex(where: \.isHeader) ?? commands.endIndex
+                guard commands[(i + 1)..<groupEnd].contains(where: \.isSelectable) else { continue }
+            }
+            kept.append(cmd)
+        }
+        var out: [PaletteCommand] = []
+        for cmd in kept {
+            if cmd.isSpacer && (out.isEmpty || out.last?.isSpacer == true) { continue }
+            out.append(cmd)
+        }
+        while out.last?.isSpacer == true { out.removeLast() }
+        return out
+    }
+
     /// Set the root level from a generator so the panel can rebuild it (for live
     /// marker refresh and to flatten nested submenus during a global search).
     func setRoot(title: String = "Commands", generate: @escaping () -> [PaletteCommand]) {
         self.generate = generate
-        self.commands = generate()
+        self.commands = Self.pruned(generate())
         self.title = title
         self.stack = []
         self.liveQuery = nil
@@ -153,7 +176,7 @@ final class CommandPanel {
         stack.append((self.title, self.generate, self.commands, query, selectedIndex, liveQuery))
         self.title = title
         self.generate = generate
-        self.commands = generate()
+        self.commands = Self.pruned(generate())
         query = ""
         liveQuery = nil          // a submenu is a normal fuzzy-filtered level
         liveCache = nil
@@ -166,7 +189,7 @@ final class CommandPanel {
         guard let parent = stack.popLast() else { hide(); return }
         title = parent.title
         generate = parent.generate
-        commands = parent.commands
+        commands = Self.pruned(parent.commands)
         query = parent.query
         selectedIndex = parent.selectedIndex
         liveQuery = parent.live
@@ -377,7 +400,7 @@ final class CommandPanel {
             return
         }
         if cmd.keepsOpen {
-            commands = generate()
+            commands = Self.pruned(generate())
             onStateChanged?()
         } else {
             hide()
