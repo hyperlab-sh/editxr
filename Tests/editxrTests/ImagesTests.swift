@@ -79,10 +79,83 @@ final class ImagesTests: XCTestCase {
         let service = Images()
         let ready = Images.Ready(png: ImagePNG(data: Data([1, 2, 3]), width: 1, height: 1), id: 99)
         let placement = Images.Placement(image: ready, row: 3, column: 2, columns: 10, rows: 5)
-        XCTAssertTrue(service.commands([placement]).contains("a=t"))
-        let next = service.commands([placement])
-        XCTAssertFalse(next.contains("a=t"))
-        XCTAssertTrue(next.contains("a=p,i=99"))
+        let first = service.commands([placement])
+        XCTAssertTrue(first.contains("a=t"))
+        XCTAssertTrue(first.contains("a=p,i=99"))
+        // Removed, then shown again: placed anew but never re-transmitted.
+        XCTAssertEqual(service.commands([]), KittyGraphics.deleteImage(id: 99))
+        let again = service.commands([placement])
+        XCTAssertFalse(again.contains("a=t"))
+        XCTAssertTrue(again.contains("a=p,i=99"))
+    }
+
+    func testIdsStartAtTheBase() {
+        let png = ImagePNG(data: Data([1, 2, 3]), width: 1, height: 1)
+        let service = Images(idBase: 1_000_000)
+        XCTAssertEqual(service.register(png).id, 1_000_000)
+        XCTAssertEqual(service.register(png).id, 1_000_001)
+        XCTAssertEqual(Images().register(png).id, 100)
+    }
+
+    func testIdBaseFlagParsing() {
+        XCTAssertEqual(Images.imageIdBaseFlag, "--image-id-base=")
+        XCTAssertEqual(Images.idBase(in: ["editxr", "--image-id-base=1000000", "a.md"]), 1_000_000)
+        XCTAssertNil(Images.idBase(in: ["editxr", "a.md"]))
+        XCTAssertNil(Images.idBase(in: ["editxr", "--image-id-base="]))
+        XCTAssertNil(Images.idBase(in: ["editxr", "--image-id-base=abc"]))
+        XCTAssertNil(Images.idBase(in: ["editxr", "--image-id-base=-5"]))
+        XCTAssertNil(Images.idBase(in: ["editxr", "--image-id-base=0"]))
+        XCTAssertNil(Images.idBase(in: ["editxr", "--image-id-base=99999999999"]))
+    }
+
+    func testCommandsEmitOnlyTheDelta() {
+        let service = Images(idBase: 500)
+        let image = service.register(ImagePNG(data: Data([1, 2, 3]), width: 1, height: 1))
+        let delete = KittyGraphics.deleteImage(id: image.id)
+        let at = { (row: Int) in Images.Placement(image: image, row: row, column: 2, columns: 10, rows: 5) }
+
+        let frame1 = service.commands([at(3)])
+        XCTAssertTrue(frame1.contains("a=t,f=100,t=d,i=500"))
+        XCTAssertTrue(frame1.contains(KittyGraphics.place(id: 500, row: 3, column: 2, columns: 10, rows: 5)))
+        XCTAssertFalse(frame1.contains("a=d"))
+
+        XCTAssertEqual(service.commands([at(3)]), "")
+
+        let frame3 = service.commands([at(4)])
+        XCTAssertFalse(frame3.contains("a=t"))
+        let place = KittyGraphics.place(id: 500, row: 4, column: 2, columns: 10, rows: 5)
+        XCTAssertEqual(frame3, delete + place)
+
+        // Same row, resized: also a move.
+        let resized = Images.Placement(image: image, row: 4, column: 2, columns: 8, rows: 4)
+        XCTAssertEqual(service.commands([resized]),
+                       delete + KittyGraphics.place(id: 500, row: 4, column: 2, columns: 8, rows: 4))
+
+        XCTAssertEqual(service.commands([]), delete)
+        XCTAssertEqual(service.commands([]), "")
+    }
+
+    func testDeleteUsesIdsNotDeleteAll() throws {
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let path = directory.appendingPathComponent("agent/fixtures/sample.png").path
+        let file = NSTemporaryDirectory() + "images-delete-\(UUID().uuidString).md"
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        try "before\n![alt](\(path))\nafter\n".write(toFile: file, atomically: true, encoding: .utf8)
+        let state = EditorState(filePath: file)
+        state.sidebarMode = .off
+        state.document.cursorLine = 0
+        let app = EditorApp(states: [state], images: Images(idBase: 2_000_000))
+        app.inlineImagesEnabledForTest = true
+        let first = app.renderOutputForTest(width: 80, height: 30)
+        XCTAssertTrue(first.contains("a=p,i=2000000"))
+        XCTAssertFalse(first.contains("a=d,d=a"))
+        let second = app.renderOutputForTest(width: 80, height: 30)
+        XCTAssertFalse(second.contains("a=d,d=a"))
+        XCTAssertFalse(second.contains("a=p"))
+        state.document.cursorLine = 1
+        let revealed = app.renderOutputForTest(width: 80, height: 30)
+        XCTAssertFalse(revealed.contains("a=d,d=a"))
+        XCTAssertTrue(revealed.contains(KittyGraphics.deleteImage(id: 2_000_000)))
     }
 
     func testExpandedRowsMapMouseAndScroll() throws {

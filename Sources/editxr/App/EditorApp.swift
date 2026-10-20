@@ -60,7 +60,7 @@ class EditorApp {
     private var state: EditorState { states[activeTab] }
     /// Set by `--mirror=<path>`; see Mirror.
     var mirror: Mirror?
-    private let images = Images()
+    private let images: Images
     var inlineImagesEnabledForTest: Bool?
     private var imageBlocks: [Int: (block: InlineImages.Block, image: Images.Ready, columns: Int, rows: Int)] = [:]
     private var imagePlacements: [Images.Placement] = []
@@ -145,8 +145,9 @@ class EditorApp {
     private let toastHoldFrames = 16
     private let toastFadeFrames = 18
 
-    init(states: [EditorState]) {
+    init(states: [EditorState], images: Images = Images()) {
         self.states = states
+        self.images = images
         images.onChange = { [weak self] in self?.render() }
         images.onError = { [weak self] message in self?.showToast(message) }
         // The file explorer opens with every folder collapsed. A launch that
@@ -1591,13 +1592,18 @@ class EditorApp {
         mirror?.update()
         applyTerminalBackground()
         let size = getTerminalSize()
-        let output = renderEditor(width: size.width, height: size.height)
-        // Wrap the frame in synchronized-update mode (?2026) so the terminal
-        // shows it atomically — no flicker/tearing while repainting big frames.
-        let graphics = images.commands(imagePlacements)
-        let delete = (inlineImagesEnabledForTest ?? InlineImages.enabled) ? KittyGraphics.deletePlacements : ""
-        print("\u{1B}[?2026h\(delete)\u{1B}[H\(output)\u{1B}[0J\(graphics)\u{1B}[\(size.height);\(size.width)H\u{1B}[?2026l", terminator: "")
+        print(frame(width: size.width, height: size.height), terminator: "")
         fflush(stdout)
+    }
+
+    /// One frame's bytes. Wrapped in synchronized-update mode (?2026) so the
+    /// terminal shows it atomically — no flicker/tearing while repainting big
+    /// frames. Images are diffed per id (never delete-all), so a second editxr
+    /// sharing the terminal keeps its placements.
+    private func frame(width: Int, height: Int) -> String {
+        let output = renderEditor(width: width, height: height)
+        let graphics = images.commands(imagePlacements)
+        return "\u{1B}[?2026h\u{1B}[H\(output)\u{1B}[0J\(graphics)\u{1B}[\(height);\(width)H\u{1B}[?2026l"
     }
 
     /// Set the terminal background to the active theme's surface colour (OSC 11)
@@ -1630,6 +1636,11 @@ class EditorApp {
     /// to lines, so tests can exercise composition like the docked outline sidebar.
     func renderEditorLinesForTest(width: Int, height: Int) -> [String] {
         return renderEditor(width: width, height: height).components(separatedBy: "\n")
+    }
+
+    /// Test hook: the exact bytes `render()` writes for one frame at a fixed size.
+    func renderOutputForTest(width: Int, height: Int) -> String {
+        frame(width: width, height: height)
     }
 
     /// Test hook: open the command palette without touching the terminal.

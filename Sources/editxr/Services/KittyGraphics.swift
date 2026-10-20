@@ -11,6 +11,12 @@ enum KittyGraphics {
     // Lowercase a deletes placements, retaining transmitted image data.
     static let deletePlacements = "\u{1B}_Ga=d,d=a,q=2\u{1B}\\"
 
+    /// Deletes the placements of one image id only (lowercase i keeps its data),
+    /// so a second editxr instance sharing the terminal keeps its own images.
+    static func deleteImage(id: UInt32) -> String {
+        "\u{1B}_Ga=d,d=i,i=\(id),q=2\u{1B}\\"
+    }
+
     static func supported(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
         let program = environment["TERM_PROGRAM", default: ""].lowercased()
         return ["kitty", "wezterm", "ghostty"].contains(program)

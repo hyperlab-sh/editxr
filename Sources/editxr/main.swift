@@ -69,7 +69,9 @@ guard !states.isEmpty else {
     exit(1)
 }
 
-let app = EditorApp(states: states)
+// --image-id-base=<n> lets a second instance (follow preview) share the
+// terminal without colliding on Kitty image ids; invalid values are ignored.
+let app = EditorApp(states: states, images: Images.idBase(in: arguments).map { Images(idBase: $0) } ?? Images())
 if let path = Mirror.path(in: arguments) {
     app.mirror = Mirror(path: path, state: states[0])
 }

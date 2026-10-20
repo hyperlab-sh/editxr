@@ -103,10 +103,30 @@ final class Images {
     private var pending: Set<String> = []
     private var failed: Set<String> = []
     private var transmitted: Set<UInt32> = []
-    private var nextID: UInt32 = 100
+    /// What the terminal currently shows, by image id; `commands` emits only the delta.
+    private var placed: [UInt32: (row: Int, column: Int, columns: Int, rows: Int)] = [:]
+    private let idBase: UInt32
+    private var nextID: UInt32
     private let config = Config.load()
     var maxRows: Int { max(1, min(100, config.imageMaxRows ?? 12)) }
     var scale: Int { max(1, min(4, config.imageScale ?? 2)) }
+
+    /// `--image-id-base=<n>`: a second instance sharing the terminal (follow
+    /// preview) starts its Kitty image ids elsewhere so the two never collide.
+    static let imageIdBaseFlag = "--image-id-base="
+
+    /// The id base from `arguments`, or nil when absent or invalid (0 is not a
+    /// usable Kitty id).
+    static func idBase(in arguments: [String]) -> UInt32? {
+        guard let argument = arguments.last(where: { $0.hasPrefix(imageIdBaseFlag) }),
+              let value = UInt32(argument.dropFirst(imageIdBaseFlag.count)), value > 0 else { return nil }
+        return value
+    }
+
+    init(idBase: UInt32 = 100) {
+        self.idBase = idBase
+        self.nextID = idBase
+    }
 
     func image(for block: InlineImages.Block, documentPath: String, theme: String) -> Ready? {
         if !block.mermaid {
@@ -144,20 +164,41 @@ final class Images {
 
     private func store(_ png: ImagePNG, key: String) -> Ready {
         let value = Ready(png: png, id: nextID)
-        nextID += 1
+        // Wrap (skipping the invalid id 0) instead of trapping near UInt32.max.
+        nextID = nextID == .max ? idBase : nextID + 1
         ready[key] = value
         return value
     }
 
+    /// Test seam: store a PNG under a fresh id without touching disk or the helper.
+    func register(_ png: ImagePNG) -> Ready {
+        store(png, key: "test:\(nextID)")
+    }
+
+    /// The Kitty commands that turn the previous frame's placements into these:
+    /// per-id deletes for placements that vanished or moved, a one-time transmit
+    /// for new ids, and a place for new or moved placements. Unchanged frames
+    /// emit nothing. One placement per image id.
     func commands(_ placements: [Placement]) -> String {
-        var output = ""
+        var next: [UInt32: (row: Int, column: Int, columns: Int, rows: Int)] = [:]
         for placement in placements {
-            if transmitted.insert(placement.image.id).inserted {
-                output += KittyGraphics.transmit(placement.image.png.data, id: placement.image.id)
-            }
-            output += KittyGraphics.place(id: placement.image.id, row: placement.row, column: placement.column,
-                                          columns: placement.columns, rows: placement.rows)
+            next[placement.image.id] = (placement.row, placement.column, placement.columns, placement.rows)
         }
+        var output = ""
+        for (id, old) in placed.sorted(by: { $0.key < $1.key }) where next[id].map({ $0 != old }) ?? true {
+            output += KittyGraphics.deleteImage(id: id)
+        }
+        for placement in placements {
+            let id = placement.image.id
+            guard let spot = next[id], placed[id].map({ $0 != spot }) ?? true else { continue }
+            if transmitted.insert(id).inserted {
+                output += KittyGraphics.transmit(placement.image.png.data, id: id)
+            }
+            output += KittyGraphics.place(id: id, row: spot.row, column: spot.column,
+                                          columns: spot.columns, rows: spot.rows)
+            placed[id] = spot
+        }
+        placed = next
         return output
     }
 
