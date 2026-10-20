@@ -17,6 +17,7 @@ final class Mirror {
     let path: String
     let state: EditorState
     private var written: String?
+    private var writtenCursor: Int?
     private var saveSignal: AnyObject?
 
     init(path: String, state: EditorState) {
@@ -33,10 +34,21 @@ final class Mirror {
         return nil
     }
 
+    /// Sidecar holding the 0-based cursor line, next to the mirror.
+    static func cursorPath(for path: String) -> String { path + ".cursor" }
+
+    /// The cursor line stored at `path`; nil when missing, empty or not a number.
+    static func readCursor(at path: String) -> Int? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        return Int(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     /// Write the buffer (exactly what Save would write) when it changed since
-    /// the last write. Returns whether it wrote.
+    /// the last write, and the cursor line to the sidecar when it changed.
+    /// Returns whether the buffer was written.
     @discardableResult
     func update() -> Bool {
+        defer { updateCursor() }
         let content = state.document.content
         guard content != written else { return false }
         do {
@@ -46,6 +58,18 @@ final class Mirror {
         } catch {
             // Not fatal: the next change retries; the editor must keep working.
             return false
+        }
+    }
+
+    private func updateCursor() {
+        let line = state.document.cursorLine
+        guard line != writtenCursor else { return }
+        do {
+            try "\(line)\n".write(
+                toFile: Self.cursorPath(for: path), atomically: true, encoding: .utf8)
+            writtenCursor = line
+        } catch {
+            // Retried on the next update.
         }
     }
 

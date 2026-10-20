@@ -46,6 +46,35 @@ final class MirrorTests: XCTestCase {
         XCTAssertEqual(read(file), read(mirror.path), "mirror is exactly what Save writes")
     }
 
+    func testUpdateWritesCursorSidecarWhenTheCursorLineChanges() {
+        let file = tempPath("file")
+        try? "a\nb\nc".write(toFile: file, atomically: true, encoding: .utf8)
+        let state = EditorState(filePath: file)
+        state.document.cursorLine = 0
+        let mirror = Mirror(path: tempPath("out"), state: state)
+        let sidecar = Mirror.cursorPath(for: mirror.path)
+        XCTAssertEqual(sidecar, mirror.path + ".cursor")
+
+        mirror.update()
+        XCTAssertEqual(read(sidecar), "0\n")
+
+        state.document.cursorLine = 2
+        mirror.update()
+        XCTAssertEqual(read(sidecar), "2\n")
+
+        XCTAssertFalse(mirror.update(), "buffer unchanged")
+        XCTAssertEqual(read(sidecar), "2\n")
+    }
+
+    func testReadCursorRejectsGarbage() {
+        let p = tempPath("cur")
+        XCTAssertNil(Mirror.readCursor(at: p), "missing")
+        for (text, want) in [("", nil), ("x\n", nil), ("7\n", 7), ("7", 7)] as [(String, Int?)] {
+            try? text.write(toFile: p, atomically: true, encoding: .utf8)
+            XCTAssertEqual(Mirror.readCursor(at: p), want, "\(text.debugDescription)")
+        }
+    }
+
     func testAFailedWriteIsRetriedOnTheNextUpdate() {
         let state = EditorState(filePath: tempPath("file"))
         let dir = NSTemporaryDirectory() + "editxr-mirror-missing-\(UUID().uuidString)"
