@@ -1279,7 +1279,9 @@ class EditorApp {
         // bytes (re-joined by handleInput's brief hold if the terminal split
         // them across reads), so they don't match this.
         if string == "\u{1B}" {
-            if capabilities.tabs { goToPreviousTab() }
+            // Visit history, not tab chrome: stays on with `tabs` off, so a
+            // followed link or quick-open (which still open tabs) can return.
+            goToPreviousTab()
             render()
             return
         }
@@ -1713,6 +1715,7 @@ class EditorApp {
     var sidebarSelectionForTest: Int { sidebarSelection }
     var sidebarFocusedForTest: Bool { sidebarFocused }
     var sidebarRenderedForTest: Bool { sidebarRendered }
+    var lastContentHeightForTest: Int { lastContentHeight }
     func sidebarEntryCountForTest() -> Int { sidebarEntries().count }
     func sidebarEntryForTest(_ i: Int) -> (text: String, isDir: Bool, isCollapsed: Bool, path: String) {
         let e = sidebarEntries()[i]; return (e.text, e.isDir, e.isCollapsed, e.path)

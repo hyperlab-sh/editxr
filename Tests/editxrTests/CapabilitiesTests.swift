@@ -209,8 +209,9 @@ final class CapabilitiesTests: XCTestCase {
         XCTAssertEqual(lines.count, 20)
         XCTAssertFalse(lines.contains { $0.contains("ctrl+p commands") })
         XCTAssertFalse(lines.contains { $0.contains("words | Ln") }, "no status bar")
-        let contentRows = lines.count - 1   // everything but the top bar
-        XCTAssertEqual(contentRows, 20 - 1)
+        XCTAssertEqual(app.lastContentHeightForTest, 20 - 1, "content gets every row but the top bar")
+        XCTAssertEqual(lines.last?.trimmingCharacters(in: .whitespaces), "",
+                       "the last row is a blank content filler row, not chrome")
         XCTAssertTrue(lines[1].contains("Title"), "content starts right under the top bar")
 
         // The big status box is gone as well.
@@ -219,8 +220,14 @@ final class CapabilitiesTests: XCTestCase {
     }
 
     func testEnabledStatusLineKeepsThreeChromeRows() {
-        let (app, _, _) = makeApp()
+        let (app, states, _) = makeApp()
         XCTAssertEqual(app.chromeRows, 3)
+        states[0].statusBarBig = false   // slim bar: exactly the 3 chrome rows
+        _ = app.renderEditorLinesForTest(width: 80, height: 20)
+        XCTAssertEqual(app.lastContentHeightForTest, 20 - 3)
+        states[0].statusBarBig = true    // the big box adds its 2 rows on top
+        _ = app.renderEditorLinesForTest(width: 80, height: 20)
+        XCTAssertEqual(app.lastContentHeightForTest, 20 - 5)
         let lines = app.renderEditorLinesForTest(width: 80, height: 20).map(visible)
         XCTAssertEqual(lines.count, 20)
         XCTAssertTrue(lines.last?.contains("ctrl+p commands") ?? false)
@@ -289,5 +296,22 @@ final class CapabilitiesTests: XCTestCase {
         XCTAssertEqual(app.tabCountForTest, 2)
         XCTAssertFalse(app.paletteTitlesForTest().contains("Next tab"))
         XCTAssertFalse(app.shortcutsHelpTitlesForTest().contains("Next tab"))
+    }
+
+    func testDisabledTabsStillLetsEscReturnFromAnOpenedFile() {
+        var caps = Capabilities()
+        caps.tabs = false
+        let (app, states, dir) = makeApp(capabilities: caps)
+        let other = dir + "/other.md"
+        try? "other".write(toFile: other, atomically: true, encoding: .utf8)
+
+        app.openFileForTest(other)   // what ^] / quick-open do
+        XCTAssertEqual(app.activeFileForTest, other)
+
+        app.handleInputForTest("\u{1B}")
+        let fired = expectation(description: "escape hold expires")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { fired.fulfill() }
+        wait(for: [fired], timeout: 1.0)
+        XCTAssertEqual(app.activeFileForTest, states[0].filePath, "esc goes back with tabs off")
     }
 }
