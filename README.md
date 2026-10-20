@@ -193,8 +193,8 @@ auto-detection also fall back for now.
 | `Ctrl+]` | Follow link under cursor (or click a link) |
 | `Ctrl+[` / `Esc` | Back to the previous file |
 | `Ctrl+T` | Cycle task state (`[ ]` → `[*]` → `[x]`) |
-| `Tab` | Indent selection; otherwise cycle task state, demote heading, or insert tab |
-| `Shift+Tab` | Outdent (on a heading: promote) |
+| `Tab` | On a heading: demote (level + 1). Elsewhere: indent selection, cycle task state, or insert tab |
+| `Shift+Tab` | On a heading: promote (level - 1). Elsewhere: outdent |
 | `⌥S` | Focus the sidebar (outline / file tree) |
 | `Ctrl+L` | Toggle line numbers |
 | `Ctrl+P` | Command palette / settings |
@@ -219,6 +219,20 @@ previous prompts; `Esc` cancels. While reviewing the diff: `y` / `Tab` accept,
 (case-insensitive), jumping to the first match. `Ctrl+G` (or `↓`/`→`) steps to
 the next match and wraps; `↑`/`←` steps back. `Enter` keeps the matches so
 `Ctrl+G` keeps working after the bar closes; `Esc` cancels.
+
+## Host flags
+
+Flags for embedding editxr in another tool (e.g. a preview pane). They apply to
+one run and are never saved to the config.
+
+| Flag | Meaning |
+| --- | --- |
+| `--follow=<mirror>` | Read-only preview of a `--mirror` file written by another editxr; centres its cursor line (`q` quits) |
+| `--follow-base=<file>` | With `--follow`: resolve relative image paths against this file |
+| `--capabilities=<file>` | Switch features off; lines are `key = true\|false` for `sidebar`, `status_line`, `tabs`, `ai`, `export`, `vault`, `quick_open`, `focus_mode` |
+| `--view=raw\|rendered` | Starting view for this run (`Ctrl+R` still toggles) |
+| `--image-id-base=<n>` | Offset inline-image ids so two instances can share one terminal |
+| `--no-images` | Disable inline image rendering |
 
 ## Inline images (hyperlab fork)
 

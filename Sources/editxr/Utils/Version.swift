@@ -21,6 +21,16 @@ enum AppInfo {
           \(name) --follow=<mirror> [--follow-base=<file>]
                                 Read-only preview of a --mirror file that
                                 centres the editor's cursor line (q quits)
+          \(name) --capabilities=<file>
+                                Switch features off for this run; file lines
+                                are key = true|false (sidebar, status_line,
+                                tabs, ai, export, vault, quick_open, focus_mode)
+          \(name) --view=raw|rendered
+                                Starting view for this run (Ctrl+R still toggles)
+          \(name) --image-id-base=<n>
+                                Offset inline-image ids so two instances can
+                                share one terminal
+          \(name) --no-images    Disable inline image rendering
           \(name) --help          Show this help
           \(name) --version       Print the version
 
