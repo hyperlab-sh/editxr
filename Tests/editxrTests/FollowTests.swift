@@ -388,4 +388,19 @@ final class FollowTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(fired, 2)
         withExtendedLifetime(token) {}
     }
+
+    // MARK: - Signals and indexing
+
+    func testFollowNeverIndexesTheVault() {
+        let (app, _) = makeFollowApp("a", cursor: nil)
+        XCTAssertFalse(app.indexesVaultOnOpenForTest)
+    }
+
+    func testFollowSurvivesSIGUSR1() {
+        let (app, _) = makeFollowApp("a", cursor: nil)
+        app.installFollowSignalHandlersForTest()
+        defer { app.stopFollowSignalHandlersForTest() }
+        // Default SIGUSR1 action terminates the process (and this test run).
+        XCTAssertEqual(raise(SIGUSR1), 0)
+    }
 }

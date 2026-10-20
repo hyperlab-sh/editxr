@@ -217,6 +217,10 @@ final class CapabilitiesTests: XCTestCase {
         // The big status box is gone as well.
         states[0].statusBarBig = true
         XCTAssertEqual(app.renderEditorLinesForTest(width: 80, height: 20).count, 20)
+
+        // Contextual hints render in the status bar: no bar, no toggle.
+        XCTAssertFalse(app.editorMenuTitlesForTest().contains("Toggle contextual hints"))
+        XCTAssertTrue(app.editorMenuTitlesForTest().contains("Toggle block mode"))
     }
 
     func testEnabledStatusLineKeepsThreeChromeRows() {
@@ -231,6 +235,7 @@ final class CapabilitiesTests: XCTestCase {
         let lines = app.renderEditorLinesForTest(width: 80, height: 20).map(visible)
         XCTAssertEqual(lines.count, 20)
         XCTAssertTrue(lines.last?.contains("ctrl+p commands") ?? false)
+        XCTAssertTrue(app.editorMenuTitlesForTest().contains("Toggle contextual hints"))
     }
 
     func testDisabledExportIgnoresCtrlE() {
@@ -313,5 +318,68 @@ final class CapabilitiesTests: XCTestCase {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { fired.fulfill() }
         wait(for: [fired], timeout: 1.0)
         XCTAssertEqual(app.activeFileForTest, states[0].filePath, "esc goes back with tabs off")
+    }
+
+    // MARK: - vault indexing
+
+    func testDisabledVaultDoesNotIndexOnOpen() {
+        var caps = Capabilities()
+        caps.vault = false
+        let (app, _, _) = makeApp(capabilities: caps)
+        XCTAssertFalse(app.indexesVaultOnOpenForTest)
+    }
+
+    func testEnabledVaultIndexesOnOpenByDefault() {
+        let (app, _, _) = makeApp()
+        XCTAssertTrue(app.indexesVaultOnOpenForTest, "fresh config: Index on open is on")
+    }
+
+    // MARK: - mirror pinned to tab 0
+
+    /// An app whose only document holds a link to `other.md` (which exists),
+    /// cursor inside the link; `mirrored` attaches a `--mirror` to tab 0.
+    private func makeLinkApp(tabs: Bool, mirrored: Bool) -> (EditorApp, String, String) {
+        var caps = Capabilities()
+        caps.tabs = tabs
+        let (app, states, dir) = makeApp("[x](other.md)\n\nbody", capabilities: caps)
+        app.terminalOutputForTest = false
+        app.inlineImagesEnabledForTest = false
+        let other = dir + "/other.md"
+        try? "other".write(toFile: other, atomically: true, encoding: .utf8)
+        if mirrored { app.mirror = Mirror(path: dir + "/mirror.md", state: states[0]) }
+        states[0].document.cursorLine = 0
+        states[0].document.cursorColumn = 1
+        return (app, states[0].filePath, other)
+    }
+
+    func testMirrorWithTabsOffRefusesLinkFollow() {
+        let (app, original, _) = makeLinkApp(tabs: false, mirrored: true)
+        app.handleInputForTest("\u{1D}")   // ctrl+]
+        XCTAssertEqual(app.tabCountForTest, 1, "no hidden tab the mirror can't see")
+        XCTAssertEqual(app.activeFileForTest, original)
+        XCTAssertEqual(app.toastTextForTest, "Tabs are off")
+    }
+
+    func testMirrorWithTabsOffRefusesQuickOpen() {
+        let (app, original, _) = makeLinkApp(tabs: false, mirrored: true)
+        app.handleInputForTest("\u{0F}")   // ctrl+o
+        XCTAssertFalse(app.commandPanelVisibleForTest)
+        XCTAssertEqual(app.toastTextForTest, "Tabs are off")
+        XCTAssertEqual(app.activeFileForTest, original)
+    }
+
+    func testMirrorWithTabsOnStillFollowsLinks() {
+        let (app, _, other) = makeLinkApp(tabs: true, mirrored: true)
+        app.handleInputForTest("\u{1D}")
+        XCTAssertEqual(app.tabCountForTest, 2)
+        XCTAssertEqual(app.activeFileForTest, other)
+    }
+
+    func testTabsOffWithoutMirrorStillFollowsLinks() {
+        let (app, _, other) = makeLinkApp(tabs: false, mirrored: false)
+        app.handleInputForTest("\u{1D}")
+        XCTAssertEqual(app.activeFileForTest, other, "no mirror: unchanged behaviour")
+        app.handleInputForTest("\u{0F}")
+        XCTAssertTrue(app.commandPanelVisibleForTest)
     }
 }

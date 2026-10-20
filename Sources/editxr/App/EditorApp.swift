@@ -75,6 +75,8 @@ class EditorApp {
     /// `followLine`. Between those, a manual scroll holds (no cursor-follow).
     private var followNeedsCentre = false
     private var followWatch: AnyObject?
+    /// SIGTERM/SIGHUP sources of the follow preview (see installFollowSignalHandlers).
+    private var terminationWatch: [AnyObject] = []
     /// Content viewport width from the last frame (follow-mode scrolling).
     private var lastContentWidth = 80
     /// Fixed chrome rows around the content: the top bar, plus the status and
@@ -566,6 +568,10 @@ class EditorApp {
         }
     }
 
+    /// Index at startup: only with the vault capability on, never in the
+    /// follow preview, and only when the user left "Index on open" on.
+    private var indexesVaultOnOpen: Bool { follow == nil && capabilities.vault && vault.indexOnOpen }
+
     /// Rescan the vault. Runs in the background; progress shows on the status bar.
     private func rebuildVaultIndex(announce: Bool) {
         vaultIndex.build(root: vaultRoot(), includeText: vault.includeText)
@@ -828,10 +834,11 @@ class EditorApp {
         if capabilities.statusLine {
             cmds.append(toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() })
         }
-        cmds += [
-            toggleCommand("Toggle contextual hints", state.contextHelp ? "on" : "off") { [weak self] in self?.state.toggleContextHelp() },
-            toggleCommand("Toggle block mode", state.blockMode ? "on" : "off") { [weak self] in self?.state.toggleBlockMode() },
-        ]
+        if capabilities.statusLine {
+            // The hints render in the status bar; without one the toggle is a no-op.
+            cmds.append(toggleCommand("Toggle contextual hints", state.contextHelp ? "on" : "off") { [weak self] in self?.state.toggleContextHelp() })
+        }
+        cmds.append(toggleCommand("Toggle block mode", state.blockMode ? "on" : "off") { [weak self] in self?.state.toggleBlockMode() })
         if capabilities.sidebar {
             cmds += [
                 toggleCommand("Outline sidebar", state.sidebarMode == .outline ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.outline) },
@@ -955,7 +962,7 @@ class EditorApp {
         // Progress and completion both land here; rendering is cheap and the
         // index reports at a coarse stride, so this can't thrash the screen.
         vaultIndex.onChange = { [weak self] in self?.vaultIndexStateChanged() }
-        if follow == nil, vault.indexOnOpen { rebuildVaultIndex(announce: false) }
+        if indexesVaultOnOpen { rebuildVaultIndex(announce: false) }
 
         inputLoop = PlatformTerminal.startInputLoop { [weak self] data in
             self?.handleInput(data)
@@ -973,6 +980,7 @@ class EditorApp {
             // Preview: no external-change watch, no mirror, no saved cursor;
             // the watcher drives reloads. A mirror that doesn't exist yet is
             // an empty document until the first write lands.
+            installFollowSignalHandlers()
             followWatch = follow.watch { [weak self] in self?.reloadFollow() }
             reloadFollowState()
         } else {
@@ -1913,6 +1921,14 @@ class EditorApp {
     func shortcutsHelpTitlesForTest() -> [String] { CommandPanel.pruned(shortcutsHelpCommands()).map(\.title) }
     func editorMenuTitlesForTest() -> [String] { CommandPanel.pruned(editorMenuCommands()).map(\.title) }
     var commandPanelVisibleForTest: Bool { commandPanel?.isVisible ?? false }
+    var toastTextForTest: String? { toastText }
+    var indexesVaultOnOpenForTest: Bool { indexesVaultOnOpen }
+    func installFollowSignalHandlersForTest() { installFollowSignalHandlers() }
+    func stopFollowSignalHandlersForTest() {
+        terminationWatch.forEach { ($0 as? DispatchSourceSignal)?.cancel() }
+        terminationWatch = []
+        PlatformTerminal.restoreTerminationSignals()
+    }
 
     private func gutterWidth() -> Int {
         // The gutter doubles as the configurable left margin.
@@ -4424,6 +4440,7 @@ class EditorApp {
         guard !path.isEmpty else { return }
         let resolved = resolveRelative(path)
         if FileManager.default.fileExists(atPath: resolved) {
+            guard !refuseOtherFileWhenPinned() else { return }
             openFile(resolved)
             render()
         } else {
@@ -4442,6 +4459,7 @@ class EditorApp {
             showToast("No note named \(name)")
             return
         }
+        guard !refuseOtherFileWhenPinned() else { return }
         openFile(path)
         render()
     }
@@ -4750,12 +4768,20 @@ class EditorApp {
 
     /// Open the quick-switcher: a fresh directory scan in the command panel.
     private func openQuickSwitcher() {
-        guard let panel = commandPanel else { return }
+        guard let panel = commandPanel, !refuseOtherFileWhenPinned() else { return }
         fileCommandCache = nil
         wikiURICache.removeAll()
         panel.setRoot(title: "Open file") { [weak self] in self?.fileSwitcherCommands() ?? [] }
         panel.show()
         render()
+    }
+
+    /// `--mirror` follows `states[0]`; with tabs off a second file would be
+    /// edited in a hidden tab the mirror never sees. Toast and refuse instead.
+    private func refuseOtherFileWhenPinned() -> Bool {
+        guard mirror != nil, !capabilities.tabs else { return false }
+        showToast("Tabs are off")
+        return true
     }
 
     private func quit() {
@@ -4768,10 +4794,26 @@ class EditorApp {
         }
         // The preview's position is the editor's, not its own: never saved.
         if follow == nil { states.forEach { $0.persistCursorPosition() } }
+        terminate()
+    }
+
+    /// Restore the terminal, free the Kitty images and exit: the tail of
+    /// `quit`, and what SIGTERM/SIGHUP run in the follow preview.
+    private func terminate() -> Never {
         showCursor()
         exitAlternateScreen()
         resetInputMode()
         exit(0)
+    }
+
+    /// The follow preview is a host-managed pane: a stray SIGUSR1 (meant for
+    /// the editor's mirror save) must not kill it, and SIGTERM/SIGHUP clean
+    /// up the terminal and images instead of leaving them behind.
+    private func installFollowSignalHandlers() {
+        PlatformTerminal.ignoreUserSignal()
+        terminationWatch = PlatformTerminal.startTerminationWatch { [weak self] in
+            self?.terminate()
+        }
     }
 }
 

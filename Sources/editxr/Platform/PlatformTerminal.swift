@@ -76,6 +76,11 @@ enum PlatformTerminal {
     /// No SIGINT/SIGTSTP on Windows; raw mode already swallows Ctrl-C/Ctrl-Z.
     static func ignoreSuspendSignals() {}
 
+    /// No POSIX signals on Windows.
+    static func ignoreUserSignal() {}
+    static func startTerminationWatch(_ onTerminate: @escaping () -> Void) -> [AnyObject] { [] }
+    static func restoreTerminationSignals() {}
+
     /// Background thread blocking on the console input handle, dispatching the
     /// bytes (VT-encoded, since ENABLE_VIRTUAL_TERMINAL_INPUT is set) to .main.
     static func startInputLoop(_ onData: @escaping (Data) -> Void) -> AnyObject {
@@ -206,6 +211,29 @@ enum PlatformTerminal {
     static func ignoreSuspendSignals() {
         signal(SIGINT, SIG_IGN)
         signal(SIGTSTP, SIG_IGN)
+    }
+
+    /// SIGUSR1 is the mirror's save signal; anywhere else it must not kill us.
+    static func ignoreUserSignal() {
+        signal(SIGUSR1, SIG_IGN)
+    }
+
+    /// Run `onTerminate` on the main queue on SIGTERM or SIGHUP. The default
+    /// action is ignored so the dispatch source, not the kernel, handles it.
+    static func startTerminationWatch(_ onTerminate: @escaping () -> Void) -> [AnyObject] {
+        [SIGTERM, SIGHUP].map { sig in
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { onTerminate() }
+            source.resume()
+            return source as AnyObject
+        }
+    }
+
+    /// Back to the kernel's default SIGTERM/SIGHUP action.
+    static func restoreTerminationSignals() {
+        signal(SIGTERM, SIG_DFL)
+        signal(SIGHUP, SIG_DFL)
     }
 
     static func startInputLoop(_ onData: @escaping (Data) -> Void) -> AnyObject {
