@@ -3359,10 +3359,19 @@ class EditorApp {
         
         let startLine = state.scrollOffset
         let endLine = min(doc.lines.count, startLine + height)
-        
+
+        // Markdown highlighting (not for code files). Fence state is carried
+        // from line 0 so a fence opened above the viewport still marks code.
+        let highlight = state.syntaxHighlighter == nil
+        var hl = MarkdownRawHighlighter()
+        if highlight {
+            for i in 0..<min(startLine, doc.lines.count) { hl.advance(past: doc.lines[i]) }
+        }
+
         for i in startLine..<endLine {
             let line = doc.lines[i]
             let isCursorLine = i == doc.cursorLine
+            let spans = highlight ? hl.spans(for: line) : []
             
             var renderedLine: String
             
@@ -3370,6 +3379,8 @@ class EditorApp {
                 renderedLine = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
             } else if isCursorLine {
                 renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+            } else if highlight {
+                renderedLine = applyRawSpans(to: line, spans: spans, offset: 0)
             } else {
                 renderedLine = line
             }
@@ -3389,11 +3400,20 @@ class EditorApp {
         let selection = doc.selectionRange
         
         var visualLine = 0
+        let highlight = state.syntaxHighlighter == nil
+        var hl = MarkdownRawHighlighter()
         
         for i in 0..<doc.lines.count {
             let line = doc.lines[i]
             let isCursorLine = i == doc.cursorLine
             let wrappedSegments = wrapLine(line, width: width)
+            // Every line feeds the highlighter (fence state), but spans are only
+            // computed for lines with a visible row.
+            let lineVisible = visualLine + wrappedSegments.count > state.scrollOffset && output.count < height
+            var spans: [RawSpan] = []
+            if highlight {
+                if lineVisible { spans = hl.spans(for: line) } else { hl.advance(past: line) }
+            }
             
             for (segmentIndex, wrapped) in wrappedSegments.enumerated() {
                 if visualLine >= state.scrollOffset && output.count < height {
@@ -3413,6 +3433,8 @@ class EditorApp {
                         renderedLine = renderSegmentWithSelection(segment: segment, lineIndex: i, segmentStart: segmentStart, selection: selection, doc: doc)
                     } else if cursorInSegment || cursorAtSegmentEnd {
                         renderedLine = renderLineRaw(line: segment, cursorColumn: localCursor)
+                    } else if highlight && !isCursorLine {
+                        renderedLine = applyRawSpans(to: segment, spans: spans, offset: segmentStart)
                     } else {
                         renderedLine = segment
                     }
@@ -3447,6 +3469,27 @@ class EditorApp {
         return output
     }
     
+    /// Colour a raw-view row from markdown spans. `text` is the slice of the
+    /// line starting at character `offset` (a wrap segment, or the whole line
+    /// with offset 0); spans are in line coordinates and are clipped to the
+    /// slice, so a span crossing a wrap boundary styles both fragments.
+    private func applyRawSpans(to text: String, spans: [RawSpan], offset: Int) -> String {
+        let chars = Array(text)
+        let plain = MarkdownRawHighlighter.style(.plain)
+        var out = ""
+        var pos = 0
+        for sp in spans {
+            let start = max(sp.start - offset, pos)
+            let end = min(sp.end - offset, chars.count)
+            guard end > start else { continue }
+            if start > pos { out += plain + String(chars[pos..<start]) + Theme.reset }
+            out += MarkdownRawHighlighter.style(sp.kind) + String(chars[start..<end]) + Theme.reset
+            pos = end
+        }
+        if pos < chars.count { out += plain + String(chars[pos...]) + Theme.reset }
+        return out
+    }
+
     private func renderLineRaw(line: String, cursorColumn: Int) -> String {
         guard cursorColumn >= 0 else { return line }
         let col = min(cursorColumn, line.count)
