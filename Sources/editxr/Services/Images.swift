@@ -94,6 +94,8 @@ final class Images {
         let column: Int
         let columns: Int
         let rows: Int
+        /// Source-pixel band to show (`y`, `height`), or nil for the whole image.
+        var crop: (y: Int, height: Int)? = nil
     }
     var onChange: (() -> Void)?
     var onError: ((String) -> Void)?
@@ -201,7 +203,7 @@ final class Images {
                 output += KittyGraphics.transmit(placement.image.png.data, id: id)
             }
             output += KittyGraphics.place(id: id, placement: copy[id]!, row: placement.row, column: placement.column,
-                                          columns: placement.columns, rows: placement.rows)
+                                          columns: placement.columns, rows: placement.rows, crop: placement.crop)
         }
         placedCopies = copies
         return output

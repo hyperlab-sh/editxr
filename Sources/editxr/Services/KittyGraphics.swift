@@ -42,9 +42,14 @@ enum KittyGraphics {
     }
 
     /// Re-sending the same `i`+`p` replaces that placement in place (no flicker).
-    static func place(id: UInt32, placement: Int, row: Int, column: Int, columns: Int, rows: Int) -> String {
+    /// `crop` shows only a horizontal band of the source image (`y`/`h` in
+    /// source pixels) in the `columns`×`rows` cell rectangle, for an image
+    /// partly scrolled out of view.
+    static func place(id: UInt32, placement: Int, row: Int, column: Int, columns: Int, rows: Int,
+                      crop: (y: Int, height: Int)? = nil) -> String {
+        let source = crop.map { ",y=\($0.y),h=\($0.height)" } ?? ""
         // C=1 prevents the placement moving the terminal cursor.
-        "\u{1B}[\(row);\(column)H\u{1B}_Ga=p,i=\(id),p=\(placement),c=\(columns),r=\(rows),C=1,q=2\u{1B}\\"
+        return "\u{1B}[\(row);\(column)H\u{1B}_Ga=p,i=\(id),p=\(placement),c=\(columns),r=\(rows)\(source),C=1,q=2\u{1B}\\"
     }
 
     static func cellPixels() -> (Double, Double) {

@@ -283,6 +283,79 @@ final class FollowTests: XCTestCase {
                        "the mirror file is never written by the preview")
     }
 
+    /// A header-only PNG (enough for ImagePNG's size sniffing).
+    private func writePNG(width: Int, height: Int, to path: String) {
+        var bytes: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13]
+        bytes += Array("IHDR".utf8)
+        for v in [width, height] { bytes += [UInt8(v >> 24 & 255), UInt8(v >> 16 & 255), UInt8(v >> 8 & 255), UInt8(v & 255)] }
+        bytes += [8, 6, 0, 0, 0, 0, 0, 0, 0]
+        FileManager.default.createFile(atPath: path, contents: Data(bytes))
+    }
+
+    func testTallImageIsUncappedInFollowModeOnly() {
+        let dir = tempDir()
+        writePNG(width: 40, height: 400, to: dir + "/tall.png")
+        let doc = "![tall](tall.png)\nafter\n"
+
+        // Follow: full pane width, height from the aspect ratio, taller than the pane.
+        let (app, _) = makeFollowApp(doc, cursor: "0\n", base: dir + "/real.md")
+        app.inlineImagesEnabledForTest = true
+        app.reloadFollowForTest()
+        let output = app.renderOutputForTest(width: 80, height: 20)
+        let followRows = state(app).imageRowCounts[0] ?? 0
+        XCTAssertGreaterThan(followRows, 20, "no row cap and no viewport cap in follow mode")
+        // Taller than the pane: the visible top band is placed, cropped.
+        XCTAssertTrue(output.contains("r=20,y=0,h="), "sliced placement of the top 20 rows")
+
+        // Normal editor: same image stays capped.
+        write(doc, dir + "/real.md")
+        let st = EditorState(filePath: dir + "/real.md")
+        st.sidebarMode = .off
+        st.document.cursorLine = 1
+        let editor = EditorApp(states: [st])
+        editor.inlineImagesEnabledForTest = true
+        _ = editor.renderEditorLinesForTest(width: 80, height: 20)
+        let normalRows = st.imageRowCounts[0] ?? 0
+        XCTAssertGreaterThan(normalRows, 0)
+        XCTAssertLessThanOrEqual(normalRows, Images().maxRows())
+        XCTAssertLessThan(normalRows, followRows)
+    }
+
+    func testCellSizeWithUnlimitedHeightStaysFinite() {
+        let size = ImagePNG(data: Data(), width: 40, height: 400)
+            .cellSize(width: 80, height: Int.max, maxRows: Int.max, cell: (8, 16))
+        XCTAssertEqual(size.columns, 80, "full width")
+        XCTAssertEqual(size.rows, 400, "height follows the aspect ratio")
+    }
+
+    func testVisibleSliceOfATallImage() {
+        let app = EditorApp(states: [EditorState(filePath: tempDir() + "/x.md")])
+        // 20 rows over 400 px, 5 rows scrolled above a 10-row viewport.
+        let mid = app.visibleSlice(start: -5, rows: 20, height: 10, pixelHeight: 400)
+        XCTAssertEqual(mid?.top, 0)
+        XCTAssertEqual(mid?.rows, 10)
+        XCTAssertEqual(mid?.crop.y, 100)
+        XCTAssertEqual(mid?.crop.height, 200)
+        let bottom = app.visibleSlice(start: 4, rows: 20, height: 10, pixelHeight: 400)
+        XCTAssertEqual(bottom?.top, 4)
+        XCTAssertEqual(bottom?.rows, 6)
+        XCTAssertEqual(bottom?.crop.y, 0)
+        XCTAssertEqual(bottom?.crop.height, 120)
+        XCTAssertNil(app.visibleSlice(start: 10, rows: 20, height: 10, pixelHeight: 400), "below the pane")
+        XCTAssertNil(app.visibleSlice(start: -20, rows: 20, height: 10, pixelHeight: 400), "above the pane")
+    }
+
+    func testUnreadableMirrorKeepsTheLastContent() {
+        let (app, mirror) = makeFollowApp(numbered(30), cursor: "12\n")
+        app.reloadFollowForTest()
+        let before = plainLines(app, width: 40, height: 10)
+        XCTAssertTrue(before.joined().contains("line 12"))
+        try? FileManager.default.removeItem(atPath: mirror)
+        app.reloadFollowForTest()
+        XCTAssertEqual(plainLines(app, width: 40, height: 10), before, "a vanished mirror doesn't blank the preview")
+        XCTAssertEqual(app.followLineForTest, 12)
+    }
+
     func testUnlimitedMaxRows() {
         let images = Images()
         XCTAssertEqual(images.maxRows(unlimited: true), Int.max)

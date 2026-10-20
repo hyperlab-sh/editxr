@@ -1651,7 +1651,11 @@ class EditorApp {
     /// stale or negative value can't scroll out of range.
     private func reloadFollowState() {
         guard let follow else { return }
-        state.reloadFromDisk()
+        // A mirror that can't be read mid-run (being replaced, removed) keeps
+        // the last good content rather than blanking the preview.
+        if (try? String(contentsOfFile: follow.mirrorPath, encoding: .utf8)) != nil {
+            state.reloadFromDisk()
+        }
         let line = Mirror.readCursor(at: Mirror.cursorPath(for: follow.mirrorPath)) ?? followLine
         followLine = max(0, min(line, state.document.lines.count - 1))
         state.document.cursorLine = followLine
@@ -2368,7 +2372,10 @@ class EditorApp {
             }
             guard let image = images.image(for: block, documentPath: state.imagePathBase ?? state.filePath,
                                            theme: Theme.mode == .dark ? "dark" : "light") else { continue }
-            let size = image.png.cellSize(width: width, height: height, maxRows: images.maxRows(unlimited: following),
+            // Follow: full pane width, height from the aspect ratio, no cap
+            // (a tall image is shown in slices as it scrolls; see the renderer).
+            let size = image.png.cellSize(width: width, height: following ? Int.max : height,
+                                          maxRows: images.maxRows(unlimited: following),
                                           cell: KittyGraphics.cellPixels())
             imageBlocks[block.range.lowerBound] = (block, image, size.columns, size.rows)
             for line in block.range { counts[line] = line == block.range.lowerBound ? size.rows : 0 }
@@ -2742,6 +2749,18 @@ class EditorApp {
     }
 
 
+    /// The on-screen part of an image whose `rows` start at viewport row
+    /// `start` (negative: scrolled above the top): first visible row, visible
+    /// row count, and the matching source-pixel band. Nil when none shows.
+    func visibleSlice(start: Int, rows: Int, height: Int, pixelHeight: Int)
+        -> (top: Int, rows: Int, crop: (y: Int, height: Int))? {
+        let top = max(0, start), bottom = min(height, start + rows)
+        guard rows > 0, bottom > top else { return nil }
+        let y = (top - start) * pixelHeight / rows
+        let end = (bottom - start) * pixelHeight / rows
+        return (top, bottom - top, (y, max(1, end - y)))
+    }
+
     private func renderNormalModeWrapped(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
@@ -2758,6 +2777,13 @@ class EditorApp {
                     imagePlacements.append(Images.Placement(image: image.image,
                         row: imageOrigin.row + start, column: imageOrigin.column,
                         columns: image.columns, rows: image.rows))
+                } else if follow != nil, let slice = visibleSlice(start: start, rows: image.rows, height: height,
+                                                                   pixelHeight: image.image.png.height) {
+                    // Follow images are uncapped, so one taller than the pane
+                    // (or half scrolled off) shows its visible band only.
+                    imagePlacements.append(Images.Placement(image: image.image,
+                        row: imageOrigin.row + slice.top, column: imageOrigin.column,
+                        columns: image.columns, rows: slice.rows, crop: slice.crop))
                 }
                 for _ in 0..<image.rows {
                     if visualLine >= state.scrollOffset && output.count < height {
