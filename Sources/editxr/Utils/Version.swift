@@ -18,6 +18,9 @@ enum AppInfo {
           \(name) --mirror=<path> <file>
                                 Keep <path> equal to the unsaved buffer;
                                 SIGUSR1 saves the file
+          \(name) --follow=<mirror> [--follow-base=<file>]
+                                Read-only preview of a --mirror file that
+                                centres the editor's cursor line (q quits)
           \(name) --help          Show this help
           \(name) --version       Print the version
 

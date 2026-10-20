@@ -108,7 +108,12 @@ final class Images {
     private let idBase: UInt32
     private var nextID: UInt32
     private let config = Config.load()
-    var maxRows: Int { max(1, min(100, config.imageMaxRows ?? 12)) }
+    /// Row cap for one image: the configured `imageMaxRows` (1...100, default
+    /// 12), or no cap at all (`unlimited`, the follow preview) so an image takes
+    /// as many rows as the pane width and height allow.
+    func maxRows(unlimited: Bool = false) -> Int {
+        unlimited ? Int.max : max(1, min(100, config.imageMaxRows ?? 12))
+    }
     var scale: Int { max(1, min(4, config.imageScale ?? 2)) }
 
     /// `--image-id-base=<n>`: a second instance sharing the terminal (follow

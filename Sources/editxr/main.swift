@@ -76,6 +76,20 @@ if let path = launch.capabilitiesPath {
     }
 }
 
+// --image-id-base=<n> lets a second instance (follow preview) share the
+// terminal without colliding on Kitty image ids; invalid values are ignored.
+let images = Images.idBase(in: arguments).map { Images(idBase: $0) } ?? Images()
+
+// --follow=<mirror> runs a read-only preview of another editxr's --mirror
+// file: file arguments, --view and --mirror are ignored. A mirror that does
+// not exist yet is an empty document until the editor writes it.
+if let follow = Follow.parse(arguments) {
+    let preview = EditorApp(follow: follow, images: images)
+    preview.capabilities = capabilities
+    preview.start()   // runs the main loop; never returns
+    exit(0)
+}
+
 let states = LaunchArguments.makeStates(from: launch, vaultRoot: configuredVaultRoot,
                                         sidebarAllowed: capabilities.sidebar)
 guard !states.isEmpty else {
@@ -89,9 +103,7 @@ if let view = launch.view {
     for st in states { st.viewMode = view; st.viewModePinned = true }
 }
 
-// --image-id-base=<n> lets a second instance (follow preview) share the
-// terminal without colliding on Kitty image ids; invalid values are ignored.
-let app = EditorApp(states: states, images: Images.idBase(in: arguments).map { Images(idBase: $0) } ?? Images())
+let app = EditorApp(states: states, images: images)
 if let path = Mirror.path(in: arguments) {
     app.mirror = Mirror(path: path, state: states[0])
 }

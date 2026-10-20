@@ -118,7 +118,14 @@ class EditorState {
     
     var onSavedIndicatorChanged: (() -> Void)?
     
-    init(filePath: String) {
+    /// Folder-anchor for relative image links when it isn't `filePath`: the
+    /// follow preview shows a mirror file but resolves images against the real
+    /// document (`--follow-base=`). Nil uses `filePath`.
+    var imagePathBase: String?
+
+    /// `restoresCursor: false` skips the saved cursor/scroll (the follow
+    /// preview positions itself from the editor's cursor instead).
+    init(filePath: String, restoresCursor: Bool = true) {
         self.filePath = filePath
         self.document = Document()
         self.syntaxHighlighter = SyntaxRegistry.forFile(filePath)
@@ -155,7 +162,7 @@ class EditorState {
         self.openAIExpiresAt = config.openAIExpiresAt
         
         loadFile()
-        restoreCursorPosition()
+        if restoresCursor { restoreCursorPosition() }
     }
 
     /// Restore the cursor (and scroll) saved from a previous session, clamped
@@ -1360,6 +1367,44 @@ class EditorState {
         return visualLine
     }
     
+    /// Whether scroll offsets count visual rows (wrapped / image layout) rather
+    /// than document lines — the same rule the renderer and adjustScroll use.
+    private var scrollsByVisualRows: Bool {
+        (wordWrap || !imageRowCounts.isEmpty) && pendingEdit == nil && syntaxHighlighter == nil
+    }
+
+    /// Largest scroll offset, in the units `scrollOffset` currently uses.
+    func maxScrollOffset(viewportHeight: Int, viewportWidth: Int) -> Int {
+        let total = scrollsByVisualRows ? countVisualLines(viewportWidth: viewportWidth) : document.lines.count
+        let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
+        return max(0, total - viewportHeight + endSlack)
+    }
+
+    /// Follow preview: scroll so `line`'s first visual row sits on row
+    /// `(viewportHeight + 1) / 2 - 1` (the middle, rounded up for an even
+    /// height), clamped to `[0, maxScroll]`. The cursor is not moved.
+    func centerOn(line: Int, viewportHeight: Int, viewportWidth: Int) {
+        guard !document.lines.isEmpty, viewportHeight > 0 else { scrollOffset = 0; return }
+        lastViewportWidth = viewportWidth
+        let line = max(0, min(line, document.lines.count - 1))
+        var first = line
+        if scrollsByVisualRows {
+            first = 0
+            for i in 0..<line { first += visualRowCount(lineIndex: i, width: viewportWidth) }
+        }
+        let target = first - ((viewportHeight + 1) / 2 - 1)
+        let maxScroll = maxScrollOffset(viewportHeight: viewportHeight, viewportWidth: viewportWidth)
+        scrollOffset = max(0, min(target, maxScroll))
+    }
+
+    /// Follow preview: move the viewport by `delta` rows (or straight to an
+    /// edge) without touching the cursor, clamped to `[0, maxScroll]`.
+    func scrollViewportOnly(by delta: Int, viewportHeight: Int, viewportWidth: Int) {
+        let maxScroll = maxScrollOffset(viewportHeight: viewportHeight, viewportWidth: viewportWidth)
+        let moved = delta == .min ? 0 : delta == .max ? maxScroll : scrollOffset + delta
+        scrollOffset = max(0, min(moved, maxScroll))
+    }
+
     private func countVisualLines(viewportWidth: Int) -> Int {
         var total = 0
         for i in 0..<document.lines.count {

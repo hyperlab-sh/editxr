@@ -65,12 +65,32 @@ class EditorApp {
     var capabilities = Capabilities()
     /// The AI gate: compiled in (AIFeature) and not switched off for the run.
     private var aiEnabled: Bool { AIFeature.enabled && capabilities.ai }
+    /// Set by `--follow=<mirror>` (see Follow, `init(follow:)`): this instance
+    /// is a read-only preview that reloads the mirror and centres the editor's
+    /// cursor line. Nil for a normal editor.
+    private(set) var follow: Follow?
+    /// Editor cursor line the preview last centred on (0-based, clamped).
+    private var followLine = 0
+    /// Set by a reload / resize / image arrival: the next frame re-centres on
+    /// `followLine`. Between those, a manual scroll holds (no cursor-follow).
+    private var followNeedsCentre = false
+    private var followWatch: AnyObject?
+    /// Content viewport width from the last frame (follow-mode scrolling).
+    private var lastContentWidth = 80
     /// Fixed chrome rows around the content: the top bar, plus the status and
     /// hint rows unless the status line is switched off. The tab strip, the big
-    /// status box and the AI prompt are added on top by `renderEditor`.
-    var chromeRows: Int { 1 + (capabilities.statusLine ? 2 : 0) }
+    /// status box and the AI prompt are added on top by `renderEditor`. The
+    /// follow preview has no chrome at all.
+    var chromeRows: Int { follow != nil ? 0 : 1 + (capabilities.statusLine ? 2 : 0) }
+    /// The line rendering treats as "the cursor line" (shown raw, with a
+    /// caret, its table/image block unrendered). The follow preview has no
+    /// cursor of its own, so every line renders as a preview (-1 = none).
+    private var displayCursorLine: Int { follow != nil ? -1 : state.document.cursorLine }
     private let images: Images
     var inlineImagesEnabledForTest: Bool?
+    /// Test hook: false keeps `render()` from writing frames to stdout, so
+    /// input-driven tests don't spray escape codes into the test log.
+    var terminalOutputForTest = true
     private var imageBlocks: [Int: (block: InlineImages.Block, image: Images.Ready, columns: Int, rows: Int)] = [:]
     private var imagePlacements: [Images.Placement] = []
     private var rawImageLine: Int?
@@ -186,6 +206,27 @@ class EditorApp {
 
         commandPanel = CommandPanel()
         commandPanel?.onStateChanged = { [weak self] in
+            self?.render()
+        }
+    }
+
+    /// A follow-mode preview (`--follow=`) of `follow.mirrorPath`: one tab in
+    /// rendered view, no saved cursor, no sidebar or splash, images resolved
+    /// against `follow.basePath` when given.
+    convenience init(follow: Follow, images: Images = Images()) {
+        let st = EditorState(filePath: follow.mirrorPath, restoresCursor: false)
+        st.imagePathBase = follow.basePath
+        st.viewMode = .normal
+        st.viewModePinned = true
+        st.sidebarMode = .off
+        st.focusMode = .off
+        self.init(states: [st], images: images)
+        self.follow = follow
+        showSplash = false
+        // An image finishing (a Mermaid render) changes the layout under the
+        // centred line, so it re-centres like a reload.
+        images.onChange = { [weak self] in
+            self?.followNeedsCentre = true
             self?.render()
         }
     }
@@ -914,7 +955,7 @@ class EditorApp {
         // Progress and completion both land here; rendering is cheap and the
         // index reports at a coarse stride, so this can't thrash the screen.
         vaultIndex.onChange = { [weak self] in self?.vaultIndexStateChanged() }
-        if vault.indexOnOpen { rebuildVaultIndex(announce: false) }
+        if follow == nil, vault.indexOnOpen { rebuildVaultIndex(announce: false) }
 
         inputLoop = PlatformTerminal.startInputLoop { [weak self] data in
             self?.handleInput(data)
@@ -923,13 +964,23 @@ class EditorApp {
         PlatformTerminal.ignoreSuspendSignals()
 
         resizeWatch = PlatformTerminal.startResizeWatch { [weak self] in
-            self?.render()
+            guard let self else { return }
+            if self.follow != nil { self.followNeedsCentre = true }
+            self.render()
         }
 
-        startFileWatch()
-        mirror?.watchSaveSignal { [weak self] in
-            self?.mirror?.state.save()
-            self?.render()
+        if let follow {
+            // Preview: no external-change watch, no mirror, no saved cursor;
+            // the watcher drives reloads. A mirror that doesn't exist yet is
+            // an empty document until the first write lands.
+            followWatch = follow.watch { [weak self] in self?.reloadFollow() }
+            reloadFollowState()
+        } else {
+            startFileWatch()
+            mirror?.watchSaveSignal { [weak self] in
+                self?.mirror?.state.save()
+                self?.render()
+            }
         }
 
         hideCursor()
@@ -1156,6 +1207,10 @@ class EditorApp {
     }
 
     private func processInput(_ string: String) {
+        if follow != nil {
+            processFollowInput(string)
+            return
+        }
         // A pending quit (armed by quit() when there are unsaved changes) is
         // confirmed only by pressing a quit key again; any other key cancels it.
         if pendingQuit {
@@ -1582,6 +1637,114 @@ class EditorApp {
         render()
     }
 
+    // MARK: - Follow mode
+
+    /// Re-read the mirror and the cursor sidecar, then redraw centred.
+    private func reloadFollow() {
+        reloadFollowState()
+        render()
+    }
+
+    /// The reload without the redraw: buffer first, then the sidecar (the
+    /// editor writes them in that order). A missing or unparsable sidecar
+    /// keeps the last line; the line is clamped to the new document, so a
+    /// stale or negative value can't scroll out of range.
+    private func reloadFollowState() {
+        guard let follow else { return }
+        state.reloadFromDisk()
+        let line = Mirror.readCursor(at: Mirror.cursorPath(for: follow.mirrorPath)) ?? followLine
+        followLine = max(0, min(line, state.document.lines.count - 1))
+        state.document.cursorLine = followLine
+        state.document.cursorColumn = 0
+        followNeedsCentre = true
+    }
+
+    /// Follow-mode keys: q / ctrl+q / ctrl+d quit; arrows, PgUp/PgDn,
+    /// Home/End and the wheel scroll the viewport. Everything else (typing,
+    /// paste, palette, view toggle, clicks, …) is ignored.
+    private func processFollowInput(_ string: String) {
+        if let events = parseMouseEvents(string) {
+            let wheel = events.reduce(0) { $0 + ($1.button == 64 ? -1 : $1.button == 65 ? 1 : 0) }
+            if wheel != 0 { scrollFollow(by: wheel * 3) }
+            return
+        }
+        // A paste is never typed in, and a "q" inside it must not quit.
+        if extractBracketedPaste(string) != nil || string == "\u{1B}" { return }
+        for char in string {
+            if arrowKeyParser.parse(character: char) {
+                arrowKeyParser.altDelete = false
+                arrowKeyParser.altSidebar = false
+                if let key = arrowKeyParser.arrowKey {
+                    arrowKeyParser.arrowKey = nil
+                    handleFollowKey(key)
+                }
+                continue
+            }
+            if char == "q" || char == Key.ctrlQ || char == Key.ctrlD {
+                quit()
+                return
+            }
+        }
+    }
+
+    private func handleFollowKey(_ key: ArrowKey) {
+        let page = max(1, lastContentHeight - 1)
+        switch key {
+        case .up, .shiftUp: scrollFollow(by: -1)
+        case .down, .shiftDown: scrollFollow(by: 1)
+        case .pageUp, .shiftPageUp: scrollFollow(by: -page)
+        case .pageDown, .shiftPageDown: scrollFollow(by: page)
+        case .home, .ctrlUp: scrollFollow(by: .min)
+        case .end, .ctrlDown: scrollFollow(by: .max)
+        default: break
+        }
+    }
+
+    /// Move the preview's viewport; it holds until the next reload re-centres.
+    private func scrollFollow(by delta: Int) {
+        state.scrollViewportOnly(by: delta, viewportHeight: lastContentHeight, viewportWidth: lastContentWidth)
+        render()
+    }
+
+    /// The follow preview's frame: content only (no tab strip, top bar,
+    /// status/hint rows, sidebar or overlays), rendered view, centred on the
+    /// editor's cursor line after a reload. When that line is inside an image
+    /// block, the image's first row is what gets centred.
+    private func renderFollow(width: Int, height: Int) -> String {
+        let contentHeight = max(0, height)
+        lastContentHeight = max(1, contentHeight)
+        sidebarRendered = false
+        let gutter = gutterWidth()
+        let contentWidth = width - gutter
+        lastContentWidth = max(1, contentWidth)
+
+        state.setViewportWidth(contentWidth)
+        state.setSingleRowLines(collapsedTableLines())
+        imageOrigin = (1, gutter + 1)
+        prepareImages(width: contentWidth, height: contentHeight)
+        if followNeedsCentre {
+            followNeedsCentre = false
+            var line = followLine
+            if let image = imageBlocks.values.first(where: { $0.block.range.contains(line) }) {
+                line = image.block.range.lowerBound
+            }
+            state.centerOn(line: line, viewportHeight: lastContentHeight, viewportWidth: lastContentWidth)
+        } else {
+            // Content may have shrunk under a manual scroll.
+            state.scrollViewportOnly(by: 0, viewportHeight: lastContentHeight, viewportWidth: lastContentWidth)
+        }
+
+        var content: [String]
+        if let hl = state.syntaxHighlighter {
+            content = renderCodeMode(highlighter: hl, width: contentWidth, height: contentHeight, gutterWidth: gutter)
+        } else {
+            content = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
+        }
+        while content.count < contentHeight { content.append(padToWidth("", width: width)) }
+        if content.count > contentHeight { content.removeLast(content.count - contentHeight) }
+        return content.map { "\u{1B}[K" + $0 }.joined(separator: "\n")
+    }
+
     private func handleArrowKey(_ key: ArrowKey) {
         let size = getTerminalSize()
         let viewportHeight = size.height - chromeRows
@@ -1641,6 +1804,7 @@ class EditorApp {
     
     private func render() {
         mirror?.update()
+        guard terminalOutputForTest else { return }
         applyTerminalBackground()
         let size = getTerminalSize()
         print(frame(width: size.width, height: size.height), terminator: "")
@@ -1708,6 +1872,10 @@ class EditorApp {
 
     // Test hooks for sidebar focus/navigation (no rendering side effects).
     func openFileForTest(_ path: String) { openFile(path) }
+    /// Test hook: a follow-mode reload (mirror + sidecar) without drawing; the
+    /// next rendered frame centres.
+    func reloadFollowForTest() { reloadFollowState() }
+    var followLineForTest: Int { followLine }
     var statesForTest: [EditorState] { states }
     func focusSidebarForTest() { sidebarRendered = true; focusSidebar() }
     func sidebarKeyForTest(_ s: String) { handleSidebarKey(s) }
@@ -1868,6 +2036,7 @@ class EditorApp {
     }
 
     private func renderEditor(width: Int, height: Int) -> String {
+        if follow != nil { return renderFollow(width: width, height: height) }
         // Top bar (filename + optional markdown title) + status + hint bars.
         var reservedLines = chromeRows
 
@@ -2189,14 +2358,18 @@ class EditorApp {
               state.syntaxHighlighter == nil, state.document.selectionRange == nil,
               commandPanel?.isVisible != true, llmModal?.isVisible != true,
               width > 0, height > 0 else { return }
+        // The follow preview always shows images, uncapped: hiding the block
+        // under the editor's cursor would hide exactly the diagram being edited.
+        let following = follow != nil
         for block in InlineImages.blocks(lines: state.document.lines, cursorLine: -1) {
-            if block.range.contains(state.document.cursorLine) {
+            if !following && block.range.contains(state.document.cursorLine) {
                 if !block.mermaid { rawImageLine = state.document.cursorLine }
                 continue
             }
-            guard let image = images.image(for: block, documentPath: state.filePath,
+            guard let image = images.image(for: block, documentPath: state.imagePathBase ?? state.filePath,
                                            theme: Theme.mode == .dark ? "dark" : "light") else { continue }
-            let size = image.png.cellSize(width: width, height: height, maxRows: images.maxRows, cell: KittyGraphics.cellPixels())
+            let size = image.png.cellSize(width: width, height: height, maxRows: images.maxRows(unlimited: following),
+                                          cell: KittyGraphics.cellPixels())
             imageBlocks[block.range.lowerBound] = (block, image, size.columns, size.rows)
             for line in block.range { counts[line] = line == block.range.lowerBound ? size.rows : 0 }
         }
@@ -2249,7 +2422,7 @@ class EditorApp {
                 }
             }
             
-            let isCursorLine = i == doc.cursorLine
+            let isCursorLine = i == displayCursorLine
             let inHandle = isCursorLine && state.cursorInBlockHandle
             var renderedLine: String
 
@@ -2445,7 +2618,7 @@ class EditorApp {
               state.pendingEdit == nil,
               state.syntaxHighlighter == nil,
               state.wordWrap else { return [] }
-        let cursorLine = state.document.cursorLine
+        let cursorLine = displayCursorLine
         var out = Set<Int>()
         for b in collectTableBlocks() {
             let block = b.start..<b.end
@@ -2460,7 +2633,7 @@ class EditorApp {
     private func tableRenderMap(width: Int) -> [Int: String] {
         let lines = state.document.lines
         let n = lines.count
-        let cursorLine = state.document.cursorLine
+        let cursorLine = displayCursorLine
         var blocks = collectTableBlocks()
 
         // Visual preference: pad every table out to the widest one by growing its
@@ -2613,7 +2786,7 @@ class EditorApp {
                 continue
             }
 
-            let isCursorLine = i == doc.cursorLine
+            let isCursorLine = i == displayCursorLine
             let inHandle = isCursorLine && state.cursorInBlockHandle
             let spans = MarkdownLineParser.parse(line)
             let headingSpan = spans.first.flatMap { isHeadingSpan($0) ? $0 : nil }
@@ -3304,7 +3477,7 @@ class EditorApp {
 
         for i in startLine..<endLine {
             let line = doc.lines[i]
-            let isCursorLine = i == doc.cursorLine
+            let isCursorLine = i == displayCursorLine
             let tokens = highlighter.tokens(for: line, state: &hlState)
 
             let rendered: String
@@ -4567,7 +4740,8 @@ class EditorApp {
             showToast("Unsaved changes — Ctrl+D again to quit")
             return
         }
-        states.forEach { $0.persistCursorPosition() }
+        // The preview's position is the editor's, not its own: never saved.
+        if follow == nil { states.forEach { $0.persistCursorPosition() } }
         showCursor()
         exitAlternateScreen()
         resetInputMode()

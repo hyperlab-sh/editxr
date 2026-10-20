@@ -89,6 +89,7 @@ final class MirrorTests: XCTestCase {
         try? "\n".write(toFile: file, atomically: true, encoding: .utf8)
         let state = EditorState(filePath: file)
         let app = EditorApp(states: [state])
+        app.terminalOutputForTest = false   // mirror.update() still runs per render
         let mirror = Mirror(path: tempPath("out"), state: state)
         app.mirror = mirror
 
