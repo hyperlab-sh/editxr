@@ -250,12 +250,14 @@ class EditorApp {
             },
         ]
 
-        cmds.append(.spacer)
-        cmds.append(.header("AI"))
-        cmds += [
-            PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
-            submenuCommand("LLM settings") { [weak self] in self?.llmSettingsCommands() ?? [] },
-        ]
+        if AIFeature.enabled {
+            cmds.append(.spacer)
+            cmds.append(.header("AI"))
+            cmds += [
+                PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
+                submenuCommand("LLM settings") { [weak self] in self?.llmSettingsCommands() ?? [] },
+            ]
+        }
 
         cmds.append(.spacer)
         cmds.append(.header("Vault"))
@@ -716,7 +718,7 @@ class EditorApp {
             row("Cycle task / promote heading / indent", "Tab"),
             row("Outdent (heading: demote)", "⇧Tab"),
             row("Focus sidebar", "⌥S"),
-            row("AI assist", "^Space"),
+        ] + (AIFeature.enabled ? [row("AI assist", "^Space")] : []) + [
             .spacer, .header("Find"),
             row("Find", "^F"),
             row("Find next", "^G"),
@@ -1333,7 +1335,7 @@ class EditorApp {
                 }
                 needsRender = true
             case Key.ctrlSpace:
-                showLLMModal()
+                if AIFeature.enabled { showLLMModal() }
             case Key.ctrlE:
                 exportToHTML()
             case Key.enter:
@@ -3753,8 +3755,8 @@ class EditorApp {
     private func renderHintBar(width: Int) -> String {
         // Left: the AI provider (and model, if set). Right: command/help shortcuts,
         // right-aligned with one column of padding from the edge.
-        var providerText = state.llmProvider.displayName
-        if state.llmProvider == .openRouter, let model = state.openRouterModel, !model.isEmpty {
+        var providerText = AIFeature.enabled ? state.llmProvider.displayName : ""
+        if AIFeature.enabled, state.llmProvider == .openRouter, let model = state.openRouterModel, !model.isEmpty {
             providerText += " · \(model)"
         }
         let left = "\(Theme.textMuted)\(providerText)\(Theme.reset)"

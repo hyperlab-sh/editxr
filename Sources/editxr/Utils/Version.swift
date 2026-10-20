@@ -25,7 +25,7 @@ enum AppInfo {
           Ctrl+P    command palette / settings
           Ctrl+S    save               Ctrl+Q   quit
           Ctrl+F    find               Ctrl+G   find next
-          Ctrl+Space  AI assist        Ctrl+E   export to HTML
+          Ctrl+E    export to HTML
           Ctrl+R    toggle raw view    Ctrl+J   close tab
           Ctrl+T    cycle task state   Ctrl+B   focus mode (line / word)
           Ctrl+C    copy               Ctrl+X   cut
