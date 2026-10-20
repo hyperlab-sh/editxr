@@ -220,6 +220,25 @@ previous prompts; `Esc` cancels. While reviewing the diff: `y` / `Tab` accept,
 the next match and wraps; `↑`/`←` steps back. `Enter` keeps the matches so
 `Ctrl+G` keeps working after the bar closes; `Esc` cancels.
 
+## Inline images (hyperlab fork)
+
+Kitty-protocol terminals can display standalone local PNG images and `mermaid`
+fences inline. Move the cursor into the image line or fence to edit its source;
+raw view, selections, and diff review keep the original text. Remote images are
+not fetched. Partly scrolled-off pictures are hidden until fully visible.
+
+Mermaid needs `mini-md-ide mermaid-png` on PATH, or an executable path in
+`EDITXR_MERMAID_PNG`. It runs asynchronously, caching PNGs under
+`$XDG_CACHE_HOME/editxr/mermaid` (default `~/.cache/editxr/mermaid`). To try the
+fixture helper: `EDITXR_MERMAID_PNG="$PWD/agent/stub-mermaid-png.sh" .build/release/editxr agent/fixtures/sample.md`.
+
+Disable with `--no-images` or `"images": false` in
+`~/.config/editxr/config.json`. Optional `imageMaxRows` (default 12) and
+`imageScale` (default 2) control cell height and Mermaid raster scale.
+Detection uses Kitty/WezTerm/Ghostty environment markers (including
+`TERM=xterm-kitty`); terminals must actually implement Kitty graphics to show
+pictures. No Sixel/iTerm fallback is provided.
+
 ## LLM configuration
 
 Open the command palette (`Ctrl+P`) → **LLM settings** to pick a provider:

@@ -366,7 +366,7 @@ class EditorState {
     func scrollViewport(lines delta: Int, viewportHeight: Int, viewportWidth: Int) {
         guard !document.lines.isEmpty, delta != 0 else { return }
         lastViewportWidth = viewportWidth
-        let wrapped = wordWrap && pendingEdit == nil && syntaxHighlighter == nil
+        let wrapped = (wordWrap || !imageRowCounts.isEmpty) && pendingEdit == nil && syntaxHighlighter == nil
 
         let total = wrapped ? countVisualLines(viewportWidth: viewportWidth) : document.lines.count
         let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
@@ -384,7 +384,7 @@ class EditorState {
             var steps = 0
             while cursorVisual() < topLimit && steps <= applied {
                 let line = document.cursorLine, col = document.cursorColumn
-                if wrapped { moveDownWrapped() } else { document.moveDown() }
+                if wrapped && wordWrap { moveDownWrapped() } else { document.moveDown() }
                 if document.cursorLine == line && document.cursorColumn == col { break }
                 steps += 1
             }
@@ -394,7 +394,7 @@ class EditorState {
             var steps = 0
             while cursorVisual() > bottomLimit && steps <= -applied {
                 let line = document.cursorLine, col = document.cursorColumn
-                if wrapped { moveUpWrapped() } else { document.moveUp() }
+                if wrapped && wordWrap { moveUpWrapped() } else { document.moveUp() }
                 if document.cursorLine == line && document.cursorColumn == col { break }
                 steps += 1
             }
@@ -1065,9 +1065,14 @@ class EditorState {
 
     func setSingleRowLines(_ lines: Set<Int>) { singleRowLines = lines }
 
+    /// Image opening lines own the cell rectangle; covered source lines own zero rows.
+    private(set) var imageRowCounts: [Int: Int] = [:]
+    func setImageRowCounts(_ counts: [Int: Int]) { imageRowCounts = counts }
+
     /// How many rows line `index` actually occupies on screen.
     private func visualRowCount(lineIndex: Int, width: Int) -> Int {
-        if singleRowLines.contains(lineIndex) { return 1 }
+        if let rows = imageRowCounts[lineIndex] { return rows }
+        if singleRowLines.contains(lineIndex) || !wordWrap { return 1 }
         return wrapLineForNavigation(document.lines[lineIndex], width: width).count
     }
 
@@ -1144,7 +1149,7 @@ class EditorState {
     private func documentPosition(visualRow: Int, col: Int, viewportWidth: Int) -> CursorPosition {
         let lineCount = document.lines.count
         guard lineCount > 0 else { return CursorPosition(line: 0, column: 0) }
-        let wrapped = wordWrap && pendingEdit == nil && syntaxHighlighter == nil
+        let wrapped = (wordWrap || !imageRowCounts.isEmpty) && pendingEdit == nil && syntaxHighlighter == nil
 
         if !wrapped {
             let line = min(max(0, scrollOffset + visualRow), lineCount - 1)
@@ -1155,6 +1160,16 @@ class EditorState {
         let target = scrollOffset + max(0, visualRow)
         var visual = 0
         for li in 0..<lineCount {
+            if let rows = imageRowCounts[li] {
+                if target >= visual && target < visual + rows { return CursorPosition(line: li, column: 0) }
+                visual += rows
+                continue
+            }
+            if !wordWrap {
+                if target == visual { return CursorPosition(line: li, column: rawColumn(in: li, visualCol: col + scrollX)) }
+                visual += 1
+                continue
+            }
             // A collapsed (boxed) table row owns exactly one row; the click can't
             // be mapped inside its raw text, so land at the row's start.
             if singleRowLines.contains(li) {
@@ -1246,7 +1261,7 @@ class EditorState {
     func adjustScroll(viewportHeight: Int, viewportWidth: Int) {
         // We render non-wrapped while reviewing a diff and for code files, so
         // scrollOffset must be in document-line units there.
-        if wordWrap && pendingEdit == nil && syntaxHighlighter == nil {
+        if (wordWrap || !imageRowCounts.isEmpty) && pendingEdit == nil && syntaxHighlighter == nil {
             adjustScrollWrapped(viewportHeight: viewportHeight, viewportWidth: viewportWidth)
             return
         }
@@ -1297,6 +1312,13 @@ class EditorState {
         let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
         let maxScroll = max(0, totalVisualLines - viewportHeight + endSlack)
         scrollOffset = min(scrollOffset, maxScroll)
+        if !wordWrap {
+            let column = document.cursorColumn
+            if column < scrollX + scrollMarginX { scrollX = max(0, column - scrollMarginX) }
+            if column > scrollX + viewportWidth - 1 - scrollMarginX {
+                scrollX = max(0, column - viewportWidth + scrollMarginX + 1)
+            }
+        }
     }
     
     private func visualLineForCursor(viewportWidth: Int) -> Int {
@@ -1305,7 +1327,7 @@ class EditorState {
             visualLine += visualRowCount(lineIndex: i, width: viewportWidth)
         }
         // A collapsed row is drawn whole: the cursor sits on its single row.
-        if singleRowLines.contains(document.cursorLine) { return visualLine }
+        if singleRowLines.contains(document.cursorLine) || !wordWrap { return visualLine }
         let currentLine = document.lines[document.cursorLine]
         let segments = wrapLineForNavigation(currentLine, width: viewportWidth)
         var segmentIndex = 0

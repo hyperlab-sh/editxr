@@ -1,0 +1,50 @@
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
+enum KittyGraphics {
+    // Lowercase a deletes placements, retaining transmitted image data.
+    static let deletePlacements = "\u{1B}_Ga=d,d=a,q=2\u{1B}\\"
+
+    static func supported(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        let program = environment["TERM_PROGRAM", default: ""].lowercased()
+        return ["kitty", "wezterm", "ghostty"].contains(program)
+            || environment["KITTY_WINDOW_ID"] != nil
+            || environment["WEZTERM_EXECUTABLE"] != nil
+            || environment["GHOSTTY_RESOURCES_DIR"] != nil
+            || environment["TERM"] == "xterm-kitty"
+    }
+
+    static func transmit(_ png: Data, id: UInt32) -> String {
+        let bytes = Array(png.base64EncodedString().utf8)
+        var output = ""
+        for offset in stride(from: 0, to: bytes.count, by: 4096) {
+            let end = min(offset + 4096, bytes.count)
+            let prefix = offset == 0 ? "a=t,f=100,t=d,i=\(id),q=2," : ""
+            output += "\u{1B}_G\(prefix)m=\(end < bytes.count ? 1 : 0);"
+                + String(decoding: bytes[offset..<end], as: UTF8.self) + "\u{1B}\\"
+        }
+        return output
+    }
+
+    static func place(id: UInt32, row: Int, column: Int, columns: Int, rows: Int) -> String {
+        // C=1 prevents the placement moving the terminal cursor.
+        "\u{1B}[\(row);\(column)H\u{1B}_Ga=p,i=\(id),c=\(columns),r=\(rows),C=1,q=2\u{1B}\\"
+    }
+
+    static func cellPixels() -> (Double, Double) {
+        #if !os(Windows)
+        var size = winsize()
+        if ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size) == 0,
+           size.ws_col > 0, size.ws_row > 0, size.ws_xpixel > 0, size.ws_ypixel > 0 {
+            return (Double(size.ws_xpixel) / Double(size.ws_col), Double(size.ws_ypixel) / Double(size.ws_row))
+        }
+        #endif
+        return (8, 16)
+    }
+}

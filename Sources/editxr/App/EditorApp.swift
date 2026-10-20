@@ -60,6 +60,12 @@ class EditorApp {
     private var state: EditorState { states[activeTab] }
     /// Set by `--mirror=<path>`; see Mirror.
     var mirror: Mirror?
+    private let images = Images()
+    var inlineImagesEnabledForTest: Bool?
+    private var imageBlocks: [Int: (block: InlineImages.Block, image: Images.Ready, columns: Int, rows: Int)] = [:]
+    private var imagePlacements: [Images.Placement] = []
+    private var rawImageLine: Int?
+    private var imageOrigin = (row: 2, column: 1)
     /// Visited-tab history for "back" (Ctrl+[ / Esc): each focus change pushes
     /// the outgoing tab so we can return to where we came from.
     private var backStack: [EditorState] = []
@@ -141,6 +147,8 @@ class EditorApp {
 
     init(states: [EditorState]) {
         self.states = states
+        images.onChange = { [weak self] in self?.render() }
+        images.onError = { [weak self] message in self?.showToast(message) }
         // The file explorer opens with every folder collapsed. A launch that
         // starts in files mode (`editxr .`) never goes through toggleSidebarMode,
         // so seed the collapsed set here; toggling it on later re-collapses.
@@ -1054,6 +1062,9 @@ class EditorApp {
     }
 
     private func exitAlternateScreen() {
+        if inlineImagesEnabledForTest ?? InlineImages.enabled {
+            print("\u{1B}_Ga=d,d=A,q=2\u{1B}\\", terminator: "")
+        }
         // Restore the terminal's default foreground/background (undo OSC 10/11).
         if terminalTrueColor {
             print("\u{1B}]110\u{07}\u{1B}]111\u{07}", terminator: "")
@@ -1583,7 +1594,9 @@ class EditorApp {
         let output = renderEditor(width: size.width, height: size.height)
         // Wrap the frame in synchronized-update mode (?2026) so the terminal
         // shows it atomically — no flicker/tearing while repainting big frames.
-        print("\u{1B}[?2026h\u{1B}[H\(output)\u{1B}[0J\u{1B}[\(size.height);\(size.width)H\u{1B}[?2026l", terminator: "")
+        let graphics = images.commands(imagePlacements)
+        let delete = (inlineImagesEnabledForTest ?? InlineImages.enabled) ? KittyGraphics.deletePlacements : ""
+        print("\u{1B}[?2026h\(delete)\u{1B}[H\(output)\u{1B}[0J\(graphics)\u{1B}[\(size.height);\(size.width)H\u{1B}[?2026l", terminator: "")
         fflush(stdout)
     }
 
@@ -1609,6 +1622,7 @@ class EditorApp {
     /// size, without touching the terminal. Mirrors the production content render
     /// (`renderNormalMode`) so render tests exercise the real wrap/markup paths.
     func renderContentLinesForTest(width: Int, height: Int) -> [String] {
+        prepareImages(width: width, height: height)
         return renderNormalMode(width: width, height: height, gutterWidth: gutterWidth())
     }
 
@@ -1816,6 +1830,8 @@ class EditorApp {
 
         state.setViewportWidth(contentWidth)
         state.setSingleRowLines(collapsedTableLines())
+        imageOrigin = (showTabs ? 3 : 2, sideW + sep + gutter + 1)
+        prepareImages(width: contentWidth, height: contentHeight)
         state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
 
         let margin = String(repeating: " ", count: state.leftMargin)
@@ -2086,6 +2102,30 @@ class EditorApp {
         )
     }
     
+    private func prepareImages(width: Int, height: Int) {
+        imageBlocks.removeAll(keepingCapacity: true)
+        imagePlacements.removeAll(keepingCapacity: true)
+        rawImageLine = nil
+        var counts: [Int: Int] = [:]
+        defer { state.setImageRowCounts(counts) }
+        guard inlineImagesEnabledForTest ?? InlineImages.enabled,
+              state.viewMode == .normal, state.pendingEdit == nil,
+              state.syntaxHighlighter == nil, state.document.selectionRange == nil,
+              commandPanel?.isVisible != true, llmModal?.isVisible != true,
+              width > 0, height > 0 else { return }
+        for block in InlineImages.blocks(lines: state.document.lines, cursorLine: -1) {
+            if block.range.contains(state.document.cursorLine) {
+                if !block.mermaid { rawImageLine = state.document.cursorLine }
+                continue
+            }
+            guard let image = images.image(for: block, documentPath: state.filePath,
+                                           theme: Theme.mode == .dark ? "dark" : "light") else { continue }
+            let size = image.png.cellSize(width: width, height: height, maxRows: images.maxRows, cell: KittyGraphics.cellPixels())
+            imageBlocks[block.range.lowerBound] = (block, image, size.columns, size.rows)
+            for line in block.range { counts[line] = line == block.range.lowerBound ? size.rows : 0 }
+        }
+    }
+
     private func renderNormalMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
@@ -2093,7 +2133,7 @@ class EditorApp {
         
         // During review use the non-wrapped path so the inline diff is simple
         // to splice in (long diff lines clip horizontally rather than wrap).
-        if state.wordWrap && state.pendingEdit == nil {
+        if (state.wordWrap || !imageBlocks.isEmpty) && state.pendingEdit == nil {
             return renderNormalModeWrapped(width: width, height: height, gutterWidth: gutterWidth)
         }
         
@@ -2189,7 +2229,7 @@ class EditorApp {
 
                     if inHandle, let h = headingSpan {
                         renderedLine = highlightFirstGlyph(renderHeadingContent(h.content, base: headingStyle(h.kind)))
-                    } else if (headingSpan != nil && isCursorLine) || cursorInSpan != nil {
+                    } else if (headingSpan != nil && isCursorLine) || cursorInSpan != nil || rawImageLine == i {
                         renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
                     } else if let h = headingSpan {
                         renderedLine = renderHeadingContent(h.content, base: headingStyle(h.kind))
@@ -2463,6 +2503,22 @@ class EditorApp {
         var inCodeBlock = false
         
         for i in 0..<doc.lines.count {
+            if let image = imageBlocks[i] {
+                let start = visualLine - state.scrollOffset
+                if start >= 0 && start + image.rows <= height {
+                    imagePlacements.append(Images.Placement(image: image.image,
+                        row: imageOrigin.row + start, column: imageOrigin.column,
+                        columns: image.columns, rows: image.rows))
+                }
+                for _ in 0..<image.rows {
+                    if visualLine >= state.scrollOffset && output.count < height {
+                        output.append(padToWidth("", width: gutterWidth + width))
+                    }
+                    visualLine += 1
+                }
+                continue
+            }
+            if state.imageRowCounts[i] == 0 { continue }
             let line = doc.lines[i]
             let isCodeDelimiter = MarkdownLineParser.isCodeBlockDelimiter(line)
             let isFmDelimiter = isFrontmatterDelimiter(line)
@@ -2502,7 +2558,7 @@ class EditorApp {
                 width: width
             )
             
-            let wrappedSegments = wrapLine(lineToWrap, width: width)
+            let wrappedSegments = state.wordWrap ? wrapLine(lineToWrap, width: width) : [(segment: lineToWrap, startOffset: 0)]
             
             for (segmentIndex, wrapped) in wrappedSegments.enumerated() {
                 guard visualLine >= state.scrollOffset && output.count < height else {
@@ -2512,7 +2568,7 @@ class EditorApp {
                 
                 let segment = wrapped.segment
                 let segmentStart = wrapped.startOffset
-                let localCursor = computeLocalCursor(
+                let localCursor = !state.wordWrap && isCursorLine ? doc.cursorColumn : computeLocalCursor(
                     isCursorLine: isCursorLine,
                     cursorColumn: doc.cursorColumn,
                     segmentStart: segmentStart,
@@ -2544,11 +2600,13 @@ class EditorApp {
                     ? renderGutter(lineNumber: i + 1, width: gutterWidth)
                     : String(repeating: " ", count: gutterWidth)
                 
-                output.append(padToWidth(gutter + expandRowTabs(renderedLine), width: gutterWidth + width))
+                let expanded = expandRowTabs(renderedLine)
+                let visible = state.wordWrap ? expanded : applyHorizontalScroll(expanded, scrollX: state.scrollX, width: width)
+                output.append(padToWidth(gutter + visible, width: gutterWidth + width))
                 visualLine += 1
             }
             
-            if isCursorLine && doc.cursorColumn == lineToWrap.count {
+            if state.wordWrap && isCursorLine && doc.cursorColumn == lineToWrap.count {
                 if let lastSeg = wrappedSegments.last,
                    expandedDisplayWidth(lastSeg.segment, tabStop: state.tabWidth) >= width {
                     if visualLine >= state.scrollOffset && output.count < height {
@@ -2635,7 +2693,7 @@ class EditorApp {
             let render = makeListRender(list)
             return (render.prefix + list.content, .list(render))
         }
-        if isCursorLine && cursorInSpan != nil {
+        if rawImageLine == lineIndex || (isCursorLine && cursorInSpan != nil) {
             return (line, .raw)
         }
         return (line, .collapsed(spans))

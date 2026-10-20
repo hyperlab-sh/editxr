@@ -3,6 +3,9 @@ import Foundation
 struct Config: Codable {
     var wordWrap: Bool = true
     var renderMarkdown: Bool = true
+    var images: Bool? = true
+    var imageMaxRows: Int? = 12
+    var imageScale: Int? = 2
     // Optional so configs written before this field still decode.
     var showLineNumbers: Bool? = false
     var statusBarBig: Bool? = true

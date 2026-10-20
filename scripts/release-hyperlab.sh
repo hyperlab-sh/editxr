@@ -41,6 +41,6 @@ git tag -a "$VERSION" -m "editxr $VERSION"
 git push origin HEAD "$VERSION"
 gh release create "$VERSION" --repo "$REPO" --target "$(git rev-parse HEAD)" \
   --title "editxr $VERSION" \
-  --notes "hyperlab fork of pixdeo/editxr: adds --mirror=<path> (buffer follows to a file; SIGUSR1 saves). macOS universal, ad-hoc signed." \
+  --notes "hyperlab fork of pixdeo/editxr: adds --mirror=<path> (buffer follows to a file; SIGUSR1 saves) and inline image/Mermaid rendering via the Kitty graphics protocol. macOS universal, ad-hoc signed." \
   "dist/$OUT.zip" "dist/$OUT.zip.sha256"
 echo "==> Done: https://github.com/$REPO/releases/tag/$VERSION"
